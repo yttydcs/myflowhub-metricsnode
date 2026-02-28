@@ -436,6 +436,23 @@ func (r *Runtime) IsReporting() bool {
 	return r.reportEnabled.Load()
 }
 
+func (r *Runtime) MetricsSnapshot() map[string]string {
+	if r == nil {
+		return nil
+	}
+	r.reportMu.Lock()
+	if len(r.lastMetrics) == 0 {
+		r.reportMu.Unlock()
+		return map[string]string{}
+	}
+	out := make(map[string]string, len(r.lastMetrics))
+	for k, v := range r.lastMetrics {
+		out[k] = v
+	}
+	r.reportMu.Unlock()
+	return out
+}
+
 func (r *Runtime) StartReporting() error {
 	if r == nil {
 		return errors.New("runtime not initialized")
