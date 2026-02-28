@@ -1,0 +1,47 @@
+param(
+  [string]$Target = 'android/arm64',
+  [string]$JavaPkg = 'com.myflowhub.gomobile',
+  [string]$OutFile = 'android/app/libs/myflowhub.aar',
+  [int]$AndroidApi = 26
+)
+
+$ErrorActionPreference = 'Stop'
+
+$repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path | Split-Path -Parent
+$moduleDir = Join-Path $repoRoot 'nodemobile'
+$outPath = Join-Path $repoRoot $OutFile
+
+Write-Host "Build AAR via gomobile" -ForegroundColor Cyan
+Write-Host "  RepoRoot  : $repoRoot"
+Write-Host "  ModuleDir : $moduleDir"
+Write-Host "  Target    : $Target"
+Write-Host "  AndroidApi: $AndroidApi"
+Write-Host "  JavaPkg   : $JavaPkg"
+Write-Host "  OutFile   : $outPath"
+
+if (-not (Test-Path $moduleDir)) {
+  throw "nodemobile module not found: $moduleDir"
+}
+
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $outPath) | Out-Null
+
+if (-not (Get-Command gomobile -ErrorAction SilentlyContinue)) {
+  Write-Host "gomobile not found, installing..." -ForegroundColor Yellow
+  go install golang.org/x/mobile/cmd/gomobile@latest
+}
+
+$env:GOWORK = 'off'
+
+Push-Location $moduleDir
+try {
+  Write-Host "Running: gomobile init" -ForegroundColor Cyan
+  gomobile init
+
+  Write-Host "Running: gomobile bind" -ForegroundColor Cyan
+  gomobile bind -target $Target -androidapi $AndroidApi -javapkg $JavaPkg -o $outPath .
+} finally {
+  Pop-Location
+}
+
+Write-Host "OK: $outPath" -ForegroundColor Green
+
