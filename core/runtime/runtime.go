@@ -22,6 +22,7 @@ import (
 	"github.com/yttydcs/myflowhub-sdk/transport"
 
 	rtauth "github.com/yttydcs/myflowhub-metricsnode/core/auth"
+	"github.com/yttydcs/myflowhub-metricsnode/core/configstore"
 	"github.com/yttydcs/myflowhub-metricsnode/core/metrics"
 	rtvar "github.com/yttydcs/myflowhub-metricsnode/core/varstore"
 )
@@ -38,6 +39,11 @@ type AuthSnapshot struct {
 	LastAction   string `json:"last_action,omitempty"`
 	LastMessage  string `json:"last_message,omitempty"`
 	LastUnixTime int64  `json:"last_unix_time,omitempty"`
+}
+
+type publishedVar struct {
+	Value      string
+	Visibility string
 }
 
 type Runtime struct {
@@ -58,10 +64,15 @@ type Runtime struct {
 
 	keys *rtauth.KeyStore
 
+	cfgStore *configstore.Store
+	cfgMu    sync.RWMutex
+	cfg      runtimeConfig
+
 	reportMu      sync.Mutex
 	reportCancel  context.CancelFunc
 	reportEnabled atomic.Bool
-	lastPublished map[string]string
+	lastMetrics   map[string]string
+	lastPublished map[string]publishedVar
 }
 
 func New(workDir string, log *slog.Logger) (*Runtime, error) {
@@ -87,6 +98,9 @@ func New(workDir string, log *slog.Logger) (*Runtime, error) {
 	}
 	rt.keys = rtauth.NewKeyStore(filepath.Join(abs, "node_keys.json"))
 	_ = rt.loadAuthSnapshot()
+	if err := rt.initRuntimeConfig(); err != nil {
+		return nil, err
+	}
 	return rt, nil
 }
 
@@ -132,8 +146,13 @@ func (r *Runtime) ensureClient() *sdkawait.Client {
 }
 
 func (r *Runtime) onUnmatchedFrame(hdr core.IHeader, payload []byte) {
-	// T1: keep it light; later tasks will add routing for management/config etc.
-	if r == nil || r.log == nil || hdr == nil || len(payload) == 0 {
+	if r == nil || hdr == nil || len(payload) == 0 {
+		return
+	}
+	if r.tryHandleManagementFrame(hdr, payload) {
+		return
+	}
+	if r.log == nil || !r.log.Enabled(context.Background(), slog.LevelDebug) {
 		return
 	}
 	preview := payload
@@ -435,8 +454,11 @@ func (r *Runtime) StartReporting() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	r.reportCancel = cancel
 	r.reportEnabled.Store(true)
+	if r.lastMetrics == nil {
+		r.lastMetrics = make(map[string]string)
+	}
 	if r.lastPublished == nil {
-		r.lastPublished = make(map[string]string)
+		r.lastPublished = make(map[string]publishedVar)
 	}
 
 	metrics.StartPlatformCollectors(ctx, r.log, r.handleMetricUpdate)
@@ -476,8 +498,11 @@ func (r *Runtime) handleMetricUpdate(metric string, value string) {
 		return
 	}
 	metric = strings.TrimSpace(metric)
-	value = strings.TrimSpace(value)
-	if metric == "" || value == "" {
+	rawValue := strings.TrimSpace(value)
+	if metric == "" || rawValue == "" {
+		return
+	}
+	if !r.IsReporting() {
 		return
 	}
 	auth := r.AuthState()
@@ -485,52 +510,79 @@ func (r *Runtime) handleMetricUpdate(metric string, value string) {
 		return
 	}
 
-	varName, ok := defaultVarName(metric)
-	if !ok {
+	r.reportMu.Lock()
+	if r.lastMetrics == nil {
+		r.lastMetrics = make(map[string]string)
+	}
+	r.lastMetrics[metric] = rawValue
+	r.reportMu.Unlock()
+
+	cfg := r.configSnapshot()
+	if len(cfg.Bindings) == 0 {
 		return
+	}
+
+	visibility := strings.TrimSpace(cfg.VisibilityDefault)
+	if visibility == "" {
+		visibility = protovar.VisibilityPublic
+	}
+	publishValue := transformMetricValue(metric, rawValue, cfg)
+	if publishValue == "" {
+		return
+	}
+	for _, b := range cfg.Bindings {
+		if b.Metric != metric {
+			continue
+		}
+		r.publishVar(auth.NodeID, auth.HubID, b.VarName, publishValue, visibility)
+	}
+}
+
+func (r *Runtime) publishVar(sourceID, targetID uint32, varName, value, visibility string) {
+	if r == nil {
+		return
+	}
+	varName = strings.TrimSpace(varName)
+	value = strings.TrimSpace(value)
+	visibility = strings.ToLower(strings.TrimSpace(visibility))
+	if varName == "" || value == "" {
+		return
+	}
+	if visibility == "" {
+		visibility = protovar.VisibilityPublic
 	}
 	if !rtvar.ValidVarName(varName) {
 		if r.log != nil {
-			r.log.Warn("invalid var name; drop update", "metric", metric, "var", varName)
+			r.log.Warn("invalid var name; drop update", "var", varName)
 		}
 		return
 	}
 
 	r.reportMu.Lock()
-	prev := r.lastPublished[varName]
-	if prev == value {
+	if r.lastPublished == nil {
+		r.lastPublished = make(map[string]publishedVar)
+	}
+	prev, ok := r.lastPublished[varName]
+	if ok && prev.Value == value && prev.Visibility == visibility {
 		r.reportMu.Unlock()
 		return
 	}
-	r.lastPublished[varName] = value
+	r.lastPublished[varName] = publishedVar{Value: value, Visibility: visibility}
 	r.reportMu.Unlock()
 
 	vc := rtvar.New(r.ensureClient(), r.log)
 	req := protovar.SetReq{
 		Name:       varName,
 		Value:      value,
-		Visibility: protovar.VisibilityPublic,
+		Visibility: visibility,
 		Type:       "string",
-		Owner:      auth.NodeID,
+		Owner:      sourceID,
 	}
-	if err := vc.Set(auth.NodeID, auth.HubID, req); err != nil {
+	if err := vc.Set(sourceID, targetID, req); err != nil {
 		r.storeLastError(err)
 		if r.log != nil {
-			r.log.Warn("varstore set failed", "metric", metric, "var", varName, "err", err.Error())
+			r.log.Warn("varstore set failed", "var", varName, "err", err.Error())
 		}
-	}
-}
-
-func defaultVarName(metric string) (string, bool) {
-	switch metric {
-	case metrics.MetricBatteryPercent:
-		return "sys_battery_percent", true
-	case metrics.MetricVolumePercent:
-		return "sys_volume_percent", true
-	case metrics.MetricVolumeMuted:
-		return "sys_volume_muted", true
-	default:
-		return "", false
 	}
 }
 
@@ -552,14 +604,14 @@ func (r *Runtime) sendAndAwait(ctx context.Context, sub uint8, src, tgt uint32, 
 func (r *Runtime) setAuthSnapshot(action, deviceID string, data protoauth.RespData) {
 	r.authMu.Lock()
 	r.auth = AuthSnapshot{
-		DeviceID:      deviceID,
-		NodeID:        data.NodeID,
-		HubID:         data.HubID,
-		Role:          strings.TrimSpace(data.Role),
-		LoggedIn:      true,
-		LastAction:    strings.TrimSpace(action),
-		LastMessage:   strings.TrimSpace(data.Msg),
-		LastUnixTime:  time.Now().Unix(),
+		DeviceID:     deviceID,
+		NodeID:       data.NodeID,
+		HubID:        data.HubID,
+		Role:         strings.TrimSpace(data.Role),
+		LoggedIn:     true,
+		LastAction:   strings.TrimSpace(action),
+		LastMessage:  strings.TrimSpace(data.Msg),
+		LastUnixTime: time.Now().Unix(),
 	}
 	r.authMu.Unlock()
 	if r.log != nil {
