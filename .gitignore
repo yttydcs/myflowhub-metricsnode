@@ -1,0 +1,28 @@
+# Go
+/bin/
+/dist/
+*.exe
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+/config/
+
+# Wails (windows/)
+/windows/build/bin/
+/windows/frontend/dist/
+/windows/frontend/node_modules/
+
+# Android (android/)
+**/.gradle/
+**/build/
+**/local.properties
+**/*.iml
+/.idea/
+
+# Gomobile
+*.aar
+*.jar
+/android/app/libs/
+
