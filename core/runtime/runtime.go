@@ -16,11 +16,14 @@ import (
 	core "github.com/yttydcs/myflowhub-core"
 	"github.com/yttydcs/myflowhub-core/header"
 	protoauth "github.com/yttydcs/myflowhub-proto/protocol/auth"
+	protovar "github.com/yttydcs/myflowhub-proto/protocol/varstore"
 	sdkawait "github.com/yttydcs/myflowhub-sdk/await"
 	"github.com/yttydcs/myflowhub-sdk/session"
 	"github.com/yttydcs/myflowhub-sdk/transport"
 
 	rtauth "github.com/yttydcs/myflowhub-metricsnode/core/auth"
+	"github.com/yttydcs/myflowhub-metricsnode/core/metrics"
+	rtvar "github.com/yttydcs/myflowhub-metricsnode/core/varstore"
 )
 
 const defaultAuthTimeout = 8 * time.Second
@@ -54,6 +57,11 @@ type Runtime struct {
 	lastErr atomic.Value // string
 
 	keys *rtauth.KeyStore
+
+	reportMu      sync.Mutex
+	reportCancel  context.CancelFunc
+	reportEnabled atomic.Bool
+	lastPublished map[string]string
 }
 
 func New(workDir string, log *slog.Logger) (*Runtime, error) {
@@ -202,6 +210,7 @@ func (r *Runtime) Close() {
 	if r == nil {
 		return
 	}
+	r.StopReporting()
 	r.clientMu.Lock()
 	c := r.client
 	r.client = nil
@@ -399,6 +408,130 @@ func (r *Runtime) Login(deviceID string, nodeID uint32) (protoauth.RespData, err
 	}
 
 	return data, nil
+}
+
+func (r *Runtime) IsReporting() bool {
+	if r == nil {
+		return false
+	}
+	return r.reportEnabled.Load()
+}
+
+func (r *Runtime) StartReporting() error {
+	if r == nil {
+		return errors.New("runtime not initialized")
+	}
+	auth := r.AuthState()
+	if !auth.LoggedIn || auth.NodeID == 0 || auth.HubID == 0 {
+		return errors.New("login required")
+	}
+
+	r.reportMu.Lock()
+	defer r.reportMu.Unlock()
+	if r.reportCancel != nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	r.reportCancel = cancel
+	r.reportEnabled.Store(true)
+	if r.lastPublished == nil {
+		r.lastPublished = make(map[string]string)
+	}
+
+	metrics.StartPlatformCollectors(ctx, r.log, r.handleMetricUpdate)
+	if r.log != nil {
+		r.log.Info("metrics reporting started")
+	}
+	return nil
+}
+
+func (r *Runtime) StopReporting() {
+	if r == nil {
+		return
+	}
+	r.reportMu.Lock()
+	cancel := r.reportCancel
+	r.reportCancel = nil
+	r.reportMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	r.reportEnabled.Store(false)
+	if r.log != nil {
+		r.log.Info("metrics reporting stopped")
+	}
+}
+
+// UpdateMetric allows external platforms (e.g. Android) to feed metric values into the runtime.
+func (r *Runtime) UpdateMetric(metric string, value string) {
+	if r == nil {
+		return
+	}
+	r.handleMetricUpdate(strings.TrimSpace(metric), strings.TrimSpace(value))
+}
+
+func (r *Runtime) handleMetricUpdate(metric string, value string) {
+	if r == nil {
+		return
+	}
+	metric = strings.TrimSpace(metric)
+	value = strings.TrimSpace(value)
+	if metric == "" || value == "" {
+		return
+	}
+	auth := r.AuthState()
+	if !auth.LoggedIn || auth.NodeID == 0 || auth.HubID == 0 {
+		return
+	}
+
+	varName, ok := defaultVarName(metric)
+	if !ok {
+		return
+	}
+	if !rtvar.ValidVarName(varName) {
+		if r.log != nil {
+			r.log.Warn("invalid var name; drop update", "metric", metric, "var", varName)
+		}
+		return
+	}
+
+	r.reportMu.Lock()
+	prev := r.lastPublished[varName]
+	if prev == value {
+		r.reportMu.Unlock()
+		return
+	}
+	r.lastPublished[varName] = value
+	r.reportMu.Unlock()
+
+	vc := rtvar.New(r.ensureClient(), r.log)
+	req := protovar.SetReq{
+		Name:       varName,
+		Value:      value,
+		Visibility: protovar.VisibilityPublic,
+		Type:       "string",
+		Owner:      auth.NodeID,
+	}
+	if err := vc.Set(auth.NodeID, auth.HubID, req); err != nil {
+		r.storeLastError(err)
+		if r.log != nil {
+			r.log.Warn("varstore set failed", "metric", metric, "var", varName, "err", err.Error())
+		}
+	}
+}
+
+func defaultVarName(metric string) (string, bool) {
+	switch metric {
+	case metrics.MetricBatteryPercent:
+		return "sys_battery_percent", true
+	case metrics.MetricVolumePercent:
+		return "sys_volume_percent", true
+	case metrics.MetricVolumeMuted:
+		return "sys_volume_muted", true
+	default:
+		return "", false
+	}
 }
 
 func (r *Runtime) sendAndAwait(ctx context.Context, sub uint8, src, tgt uint32, payload []byte, expectAction string) (sdkawait.Response, error) {
