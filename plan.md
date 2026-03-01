@@ -1,7 +1,7 @@
-# Plan - MyFlowHub-MetricsNode（MVP：电量/音量 → VarStore + Devices Config 配置）
+# Plan - MyFlowHub-MetricsNode（VarStore 下行控制：音量；只读纠偏：电量）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\metricsnode-mvp\MyFlowHub-MetricsNode`
-> 分支：`feat/metricsnode-mvp`
+> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-var-control`
+> 分支：`feat/metricsnode-var-control`
 >
 > 本文档是本 workflow 的唯一执行清单；任何实现性改动必须严格按本计划逐项完成、验证、Review、归档。
 
@@ -9,66 +9,61 @@
 
 ## 0. 项目目标与当前状态
 
-### 0.1 目标（MVP）
+### 0.1 当前状态
 
-实现一个“普通客户端节点（node）”应用，分别提供：
+- MetricsNode MVP（采集电量/音量 → VarStore + Devices Config 配置）已在主线完成并归档：`docs/change/2026-02-28_metricsnode-mvp.md`。
+- 当前缺口：VarStore 的 **下行通知（notify_set）** 到达 MetricsNode 时未被处理，导致“把变量当命令”的反向控制无法生效。
 
-- Windows：独立 Wails App（与 `MyFlowHub-Win` 技术栈一致），提供简单 UI（连接/注册/登录/状态展示/开关上报）。
-- Android：独立 App，提供 **前台服务（Foreground Service）** 持续运行。
+### 0.2 目标（本 workflow）
 
-核心行为：
+在不改变现有 bindings schema 的前提下，让 MetricsNode 支持“同一变量既是状态也是命令”：
 
-1) 通过 Auth 子协议 `register/login` 获取本节点 `node_id`；变量 owner=本节点。
-2) 采集本机指标（电量、音量），以 VarStore `set` 写入变量池（默认 `visibility=public`，可配置）。
-3) 支持通过 “Devices → Config” 远程配置该节点：实现 Management 子协议 `config_list/config_get/config_set`（仅配置类能力，不做其它 management action）。
+1) **可写指标（Writable）**
+   - 变量 `sys_volume_percent` / `sys_volume_muted` 被其它节点修改（owner=本节点）后：
+     - MetricsNode 能接收到 VarStore 下行通知；
+     - 执行本机音量/静音调整；
+     - 并确保后续采集上报不被差量去重逻辑“卡住”。
 
-### 0.2 非目标（本 workflow 不做）
+2) **只读指标（Read-only）**
+   - 变量 `sys_battery_percent` 被其它节点修改后：
+     - MetricsNode **不执行任何本机行为**；
+     - 并将变量 **纠偏回写** 为当前真实电量值（自愈）。
 
-- 市场/插件分发/第三方扩展包。
-- 反向控制/执行能力（订阅变量触发本地行为）。
-- “每 N 分钟心跳刷新一次” 的强制刷新策略（只在值变化时 set）。
-- 除电量/音量以外的其它指标（后续另起 workflow）。
+### 0.3 非目标（本 workflow 不做）
 
-### 0.3 已确认约束
+- 市场/插件系统/第三方扩展包。
+- 通用的“任意变量 → 任意执行器”的声明式执行框架（本次只做音量/电量的最小闭环，但需为后续扩展留边界）。
+- 变更 `metrics.bindings_json` 的结构（不新增可选字段）。
 
-- 平台：Windows + Android。
-- node_id：走现有 Auth 注册/登录获取。
-- VarStore 默认可见性：`public`。
-- 无电池设备：电量固定写入 `-1`（字符串 `"-1"`）。
-- 音量语义：
-  - Android：媒体音量（STREAM_MUSIC）。
-  - Windows：默认输出设备 master volume。
-- 变量名校验：仅允许字母/数字/下划线（否则会被 VarStore 拒绝）。
-- 绑定配置：允许用一个 Config key 承载 JSON 字符串（不定参数）。
-- 权限：按现有系统策略处理，本节点不额外设计权限模型（仍需做输入校验与日志）。
+### 0.4 已确认决策（来自需求/架构阶段）
+
+- 平台：Windows + Android 同时支持。
+- 音量 clamp：`0..100`，clamp 后执行。
+- 音量修改策略：仅修改音量，不自动切换静音（策略 A）。
+- “可改”默认开启；但对电量这类无意义修改，收到修改通知后不执行，只纠偏回写。
+- Android：允许增加权限 `android.permission.MODIFY_AUDIO_SETTINGS`。
 
 ---
 
-## 1. 目录与模块设计（落地到代码的约定）
+## 1. 总体方案（落地到代码的约定）
 
-> 目标：最大化复用 `myflowhub-sdk`（session/await/transport）与 `myflowhub-proto`（协议类型），避免重复实现 TCP/header/等待语义。
+> 目标：遵守 VarStore 子协议语义，不阻塞主收包循环，跨平台差异收敛在“执行层”。
 
-建议仓库结构（可在实现阶段微调，但必须同步更新本节）：
+### 1.1 关键设计点
 
-- `core/`：跨平台 Go 核心（连接状态机、Auth、VarStore 上报、Config 存储与 mgmt config 响应、bindings 解析）。
-- `windows/`：
-  - Wails App（`frontend/` + Go 端 bindings），UI/启动参数在此层。
-- `android/`：
-  - Android Studio/Gradle 工程（Kotlin UI + 前台服务）。
-  - 通过 gomobile/aar 方式调用 `core/`（避免 Kotlin 侧重复实现协议栈）。
+- **协议入口**：在 `core/runtime` 增加 VarStore 下行帧处理（识别 `SubProtoVarStore` 的 `MajorCmd` 帧，并处理 `ActionNotifySet`）。
+- **绑定反查**：通过现有 bindings（metric ↔ var_name）将 `var_name` 反查到 metric 类型，再决定“执行 / 纠偏回写”。
+- **去重兼容**：收到下行后同步更新本地 shadow（或提供“强制回写”路径），避免采集上报被差量判断误过滤。
+- **执行解耦**：
+  - Windows：Go 侧直接执行（COM endpoint volume），但必须放到独立 worker，避免阻塞 runtime 的网络循环；并避免每次 set 都重复 COM 初始化。
+  - Android：Go 侧仅入队“控制动作（actions）”，Kotlin `NodeService` 轮询拉取并执行（gomobile 导出函数），避免 Kotlin 重复实现协议栈。
+- **队列策略**：同一控制项只保留“最新动作”，避免下行频繁时堆积与抖动。
 
-配置分层：
+### 1.2 安全与输入校验（最低要求）
 
-- Bootstrap（本地必须能启动/连上 Hub 的最小配置）：
-  - 例如：`hub.addr`、`auth.device_id`、Android 是否启用前台服务等。
-  - Windows：由 Wails UI 写入本地文件。
-  - Android：由 App UI 写入 SharedPreferences/文件，并传给 Go core。
-- Runtime Config（可通过 Devices Config 远程下发，且可热更新）：
-  - 使用 `MapConfig`（key/value string），并落盘。
-  - 建议 key：
-    - `metrics.bindings_json`（JSON 数组字符串）
-    - `metrics.visibility_default`（public/private，默认 public）
-    - `metrics.battery.no_battery_value`（默认 -1）
+- 仅处理来自 Hub 的 VarStore notify_set（即 runtime 收到的 VarStore frame）；不接受本地外部进程注入。
+- 对 value 做类型/范围校验：无法解析的输入不执行，并记录告警日志。
+- 只读指标收到 set：不执行、纠偏回写（避免被恶意/误操作污染公共变量池）。
 
 ---
 
@@ -76,133 +71,85 @@
 
 > 约定：每次编码必须标注对应 Task ID；不允许计划外改动。
 
-### T0 - 仓库脚手架与构建最小闭环
+### T0 - Worktree 基线与回归保障
 
-- 目标：建立可编译的仓库骨架（Go module + Windows Wails + Android 工程占位），为后续迭代提供稳定入口。
-- 涉及模块/文件（预期）：
-  - `go.mod` / `go.sum`
-  - `windows/`（Wails scaffold）
-  - `android/`（Gradle scaffold）
-  - `core/`（空包或最小可编译）
+- 目标：确保在本 worktree 上可以稳定编译/测试，作为后续改动的回归基线。
+- 涉及模块/文件：
+  - `plan.md`
 - 验收条件：
-  - Windows：`wails build -nopackage` 能跑通（哪怕只是空 UI）。
-  - Go：`GOWORK=off go test ./... -count=1 -p 1` 通过（至少无测试失败、能编译）。
-- 测试点：
-  - 本地能启动 Windows UI（不要求功能）。
+  - `GOWORK=off go test ./... -count=1 -p 1` 通过（至少可编译）。
 - 回滚点：
-  - 回滚本仓库分支提交即可恢复到空仓库初始状态。
+  - 回滚本分支提交即可恢复。
 
-### T1 - Go Core：连接 + Auth（register/login）状态机
+### T1 - Go Core：接收 VarStore notify_set 并路由为“执行 / 纠偏”
 
-- 目标：实现跨平台的 node 核心运行时：connect → register/login → 得到 node_id/hub_id，并对外暴露状态。
+- 目标：在 MetricsNode runtime 中处理 VarStore 下行，完成反向控制与只读纠偏的核心逻辑。
 - 涉及模块/文件（预期）：
-  - `core/runtime/*`
-  - `core/auth/*`（密钥生成/保存、login 签名；可参考 `MyFlowHub-Win/internal/services/auth/*` 的实现思路）
+  - `core/runtime/runtime.go`（接入 VarStore frame 处理）
+  - `core/runtime/*`（新增：notify_set 解码、绑定反查、路由逻辑）
+  - `core/metrics/*`（必要时暴露“当前真实值”读取接口/快照）
 - 验收条件：
-  - 能成功注册/登录并得到非 0 的 `node_id`、`hub_id`（可先用手工冒烟验证）。
+  - 远端 set（owner=本节点）`sys_volume_percent/sys_volume_muted` 后，本节点能产生对应控制动作（Windows 直接执行；Android 入队）。
+  - 远端 set `sys_battery_percent` 后，本节点会很快将变量回写为真实电量值。
 - 测试点：
-  - 断线重连后能恢复连接（至少不崩溃，状态可见）。
+  - `volume_percent`：`-10`、`200`、`"abc"`。
+  - `volume_muted`：`"true"/"false"`、非法输入。
 - 回滚点：
-  - 功能隔离在 `core/`，回滚对应提交不影响脚手架。
+  - 回滚 runtime VarStore handler 提交即可回到仅上报。
 
-### T2 - Go Core：VarStore 上报（电量/音量）
+### T2 - Windows：音量/静音执行器（Actuator）
 
-- 目标：将采集结果以 VarStore `set` 写入（owner=本节点，默认 public，仅在变化时发送）。
+- 目标：实现 Windows 侧的 `SetVolumePercent/SetMuted`，并确保线程模型与性能可接受。
 - 涉及模块/文件（预期）：
-  - `core/varstore/*`（encode message + SendAndAwait/Send）
-  - `core/metrics/*`（采集接口 + 去抖/差量判断）
-  - 变量名/值规范（常量/工具）
+  - `core/actuator/*_windows.go`（新增）
+  - `core/runtime/*`（调用执行器、worker 管理）
 - 验收条件：
-  - 指标变化时可在其它客户端用 VarPool `get(owner=<node_id>, name=...)` 读取到值。
-  - 无电池时 `sys_battery_percent`（或最终命名）写入 `-1`。
-- 测试点：
-  - 变量名非法（含 `.`/`-`）会被拒绝（应在本地校验并给出错误日志，而不是一直重试刷屏）。
+  - 远端 set 后系统音量/静音会变化；重复快速 set 不导致卡顿/崩溃。
+- 性能关键点：
+  - COM 初始化与 endpoint 获取应在 worker 生命周期内复用，避免每次 set 都初始化 COM。
 - 回滚点：
-  - 回滚上报模块提交即可停止写入。
+  - 回滚 actuator 提交即可禁用 Windows 反向控制。
 
-### T3 - Go Core：Devices Config 远程配置（Management config_*）
+### T3 - Android：控制动作队列 + NodeService 执行
 
-- 目标：实现 `config_list/config_get/config_set` 的请求处理，使 Win/Android 的 “Devices → Edit(Config)” 可直接编辑本节点配置。
+- 目标：实现 Android 侧音量/静音的实际执行，并与 Go core 解耦。
 - 涉及模块/文件（预期）：
-  - `core/mgmtconfig/*`（解码 management message → 操作 MapConfig → 构造 *_resp）
-  - `core/configstore/*`（MapConfig + 落盘 + 热更新回调）
-- 设计要点：
-  - `metrics.bindings_json` 为 JSON 字符串；变更后应触发 bindings 重新加载（不要求立即回写 VarStore）。
-  - 记录配置变更日志（至少 key、来源 node_id）。
+  - `nodemobile/nodemobile.go`（新增导出：`DequeueActions()`，JSON 数组字符串）
+  - `android/app/src/main/java/**/NodeService.kt`（轮询 actions 并调用 `AudioManager` 执行）
+  - `android/app/src/main/AndroidManifest.xml`（增加 `MODIFY_AUDIO_SETTINGS`）
 - 验收条件：
-  - 在 `MyFlowHub-Win` 的 Devices 页面编辑该节点 Config：能 list/get/set 成功且重启后不丢。
-- 测试点：
-  - bindings_json 非法 JSON：拒绝并返回可读错误（config_set_resp code!=1）。
+  - 远端 set 后，Android 媒体音量/静音生效。
+- 队列策略验收：
+  - 高频下行时仅执行最新动作（不积压）。
 - 回滚点：
-  - 回滚 mgmtconfig/configstore 提交即可恢复为“仅本地配置”。
+  - 回滚 Android 执行与 gomobile 导出提交即可回到仅采集上报。
 
-### T4 - Windows：Wails UI（简单前台）
+### T4 - 测试与验收（端到端）
 
-- 目标：提供最小可用 UI：配置 hub addr/device_id、连接/断开、注册/登录、显示 node_id、显示当前指标值与上报状态。
-- 涉及模块/文件（预期）：
-  - `windows/app.go` / `windows/main.go` / `windows/wails.json`
-  - `windows/frontend/*`
-  - 与 Go core 的 bindings
-- 验收条件：
-  - 可通过 UI 完成 connect + register/login，且能看到 node_id。
-  - 指标上报后，外部可读取到 VarStore 值。
-- 测试点：
-  - UI 关闭后程序退出是否应停止上报（本 MVP：退出即停止）。
-- 回滚点：
-  - UI 与 core 解耦，回滚 windows 目录提交即可。
-
-### T5 - Android：App + 前台服务（后台持续上报）
-
-- 目标：实现 Android 独立 App：UI 负责 bootstrap 配置与启动/停止前台服务；前台服务运行 Go core 并持续上报。
-- 涉及模块/文件（预期）：
-  - `android/app/`（Kotlin/Compose）
-  - `android/*`（gomobile 产物集成脚本/说明）
-- 验收条件：
-  - 开启服务后保持后台上报；停止服务后不再上报。
-  - 通过 Auth 获取 node_id 后，VarStore 可读。
-- 测试点：
-  - 权限/通知渠道、后台限制下的稳定性（至少能在常见机型运行）。
-- 回滚点：
-  - 回滚 android 目录提交即可。
-
-### T6 - 测试与验证（关键路径）
-
-- 目标：覆盖关键路径与边界：bindings_json 校验、config_set 行为、varstore set 输入校验。
+- 目标：提供可复现的验证步骤（Win + Android），并补齐必要的 Go 单测（纯逻辑部分）。
 - 形式：
-  - Go 单测（优先）：`core/*` 的纯逻辑模块（解析/校验/差量判断）。
-  - 手工冒烟（必须写清步骤）：Win + Android 各一条端到端链路。
+  - Go 单测：clamp/解析/只读纠偏策略/队列合并策略。
+  - 手工冒烟（必须写清步骤）：
+    - 使用 `MyFlowHub-Win`（或任意可 set VarStore 的客户端）对 owner=本节点的变量执行 set。
 - 验收条件：
-  - `GOWORK=off go test ./... -count=1 -p 1` 通过。
+  - Go：`GOWORK=off go test ./... -count=1 -p 1` 通过。
+  - 手工：两端到端用例都能稳定复现。
 - 回滚点：
-  - 测试仅辅助，不影响运行时逻辑；可单独回滚。
+  - 测试仅辅助，可单独回滚。
 
-### T7 - Code Review（阶段 3.3）与变更归档（阶段 4）
+### T5 - 阶段 3.3 Code Review 与阶段 4 归档
 
-- 目标：完成强制 Review 清单，并在本 worktree 根目录创建 `docs/change/YYYY-MM-DD_metricsnode-mvp.md` 归档。
+- 目标：完成强制 Review 清单，并归档变更。
+- 输出：
+  - `docs/change/2026-03-01_metricsnode-var-control.md`
 - 验收条件：
-  - Review 结论：通过。
-  - 归档文档包含：背景/目标、变更内容、任务映射、关键权衡、测试结果、回滚方案。
+  - Review 结论：通过；归档文档齐全。
 
 ---
 
-## 3. 依赖关系、风险与注意事项
+## 3. 本地验证命令（建议）
 
-### 3.1 依赖
-
-- 依赖 Hub 侧已启用：
-  - Auth 子协议
-  - VarStore 子协议
-  - Management 子协议（用于 config_* 转发到目标 node）
-
-### 3.2 风险
-
-- Android 后台策略差异：前台服务是必要前提，但仍需考虑厂商杀后台。
-- 只在变化时上报：若长时间不变，下游可能误判“离线”（本 MVP 接受，后续再评估心跳策略）。
-- config_* 远程写入属于高权限操作：虽然本轮不设计权限模型，但必须确保输入校验与错误信息清晰，避免配置损坏导致无法恢复（至少保留本地 bootstrap）。
-
-### 3.3 本地验收命令（建议）
-
-为避免临时目录权限/并发导致的问题（参考 MyFlowHub3 习惯），可使用：
+为避免临时目录权限/并发导致的问题，可使用：
 
 ```powershell
 $env:GOTMPDIR='d:\\project\\MyFlowHub3\\.tmp\\gotmp'
@@ -210,3 +157,23 @@ New-Item -ItemType Directory -Force -Path $env:GOTMPDIR | Out-Null
 GOWORK=off go test ./... -count=1 -p 1
 ```
 
+---
+
+## 4. 依赖关系、风险与注意事项
+
+### 4.1 依赖
+
+- Hub 已启用 Auth/VarStore 子协议，且 Server 会将 `notify_set` 下发给变量 owner（本节点）。
+- 用于触发下行的客户端能够执行 VarStore `set(owner=<MetricsNodeNodeID>, name=...)`（否则会写到自己的 owner 下，看起来“没同步”）。
+
+### 4.2 风险
+
+- **反馈环**：下行控制后，采集上报会再把最新状态写回 VarStore；需要确保差量去重/本地 shadow 更新正确，否则可能出现“下行生效但 UI 值不更新/不回写”的错觉。
+- **只读纠偏刷屏**：若外部持续写入只读变量（电量），纠偏会频繁回写；必要时考虑加最小间隔（若出现实际问题，再新增任务）。
+- **Windows COM 稳定性**：需要遵守 COM 线程模型，避免在高频 set 下频繁初始化导致异常或卡顿。
+- **Android 版本差异**：不同版本对静音 API 的支持不同；需在实现阶段确认最低兼容策略（以当前工程既有实现为准）。
+
+### 4.3 注意事项
+
+- 本 workflow 不改变 `metrics.bindings_json` schema；“可写/只读”由代码内对已知 metric 的执行器能力决定。
+- 所有控制执行必须异步化，不能阻塞 runtime 的网络收包循环。

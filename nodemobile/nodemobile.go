@@ -199,6 +199,19 @@ func GetLastError() string {
 	return strings.TrimSpace(lastErr)
 }
 
+func DequeueActions() string {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+
+	if r == nil {
+		return "[]"
+	}
+	actions := r.DequeueActions()
+	raw, _ := json.Marshal(actions)
+	return string(raw)
+}
+
 // EnsureLinked is a no-op function to make it obvious in Java/Kotlin that the AAR is present.
 func EnsureLinked() error {
 	mu.Lock()

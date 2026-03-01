@@ -73,6 +73,8 @@ type Runtime struct {
 	reportEnabled atomic.Bool
 	lastMetrics   map[string]string
 	lastPublished map[string]publishedVar
+
+	controlQ *actionQueue
 }
 
 func New(workDir string, log *slog.Logger) (*Runtime, error) {
@@ -96,6 +98,7 @@ func New(workDir string, log *slog.Logger) (*Runtime, error) {
 		log:     log,
 		workDir: abs,
 	}
+	rt.controlQ = newActionQueue()
 	rt.keys = rtauth.NewKeyStore(filepath.Join(abs, "node_keys.json"))
 	_ = rt.loadAuthSnapshot()
 	if err := rt.initRuntimeConfig(); err != nil {
@@ -147,6 +150,9 @@ func (r *Runtime) ensureClient() *sdkawait.Client {
 
 func (r *Runtime) onUnmatchedFrame(hdr core.IHeader, payload []byte) {
 	if r == nil || hdr == nil || len(payload) == 0 {
+		return
+	}
+	if r.tryHandleVarStoreFrame(hdr, payload) {
 		return
 	}
 	if r.tryHandleManagementFrame(hdr, payload) {
@@ -478,6 +484,7 @@ func (r *Runtime) StartReporting() error {
 		r.lastPublished = make(map[string]publishedVar)
 	}
 
+	r.startControlWorker(ctx)
 	metrics.StartPlatformCollectors(ctx, r.log, r.handleMetricUpdate)
 	if r.log != nil {
 		r.log.Info("metrics reporting started")

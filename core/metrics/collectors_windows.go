@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	goruntime "runtime"
 	"syscall"
 	"time"
 	"unsafe"
@@ -75,6 +76,8 @@ func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 
 func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 	// COM must be initialized per-thread; keep all calls inside this goroutine.
+	goruntime.LockOSThread()
+	defer goruntime.UnlockOSThread()
 	if err := ole.CoInitialize(0); err != nil {
 		if log != nil {
 			log.Warn("ole init failed", "err", err.Error())

@@ -1,5 +1,6 @@
 package com.myflowhub.metricsnode
 
+import org.json.JSONArray
 import java.lang.reflect.Method
 
 data class NodeConfig(
@@ -8,6 +9,31 @@ data class NodeConfig(
     val workDir: String,
 )
 
+data class NodeAction(
+    val metric: String,
+    val value: String,
+)
+
+internal object NodeActionJson {
+    fun parseList(raw: String): List<NodeAction> {
+        return try {
+            val arr = JSONArray(raw)
+            val out = ArrayList<NodeAction>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val metric = obj.optString("metric", "").trim()
+                val value = obj.optString("value", "").trim()
+                if (metric.isNotEmpty() && value.isNotEmpty()) {
+                    out.add(NodeAction(metric = metric, value = value))
+                }
+            }
+            out
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+}
+
 interface NodeBridge {
     fun start(config: NodeConfig): NodeState
     fun stop(): NodeState
@@ -15,6 +41,8 @@ interface NodeBridge {
 
     fun updateBatteryPercent(percent: Int)
     fun updateVolume(volumePercent: Int, muted: Boolean)
+
+    fun dequeueActions(): List<NodeAction>
 }
 
 class StubNodeBridge : NodeBridge {
@@ -35,6 +63,8 @@ class StubNodeBridge : NodeBridge {
     override fun updateBatteryPercent(percent: Int) {}
 
     override fun updateVolume(volumePercent: Int, muted: Boolean) {}
+
+    override fun dequeueActions(): List<NodeAction> = emptyList()
 }
 
 class GoNodeBridge : NodeBridge {
@@ -47,6 +77,7 @@ class GoNodeBridge : NodeBridge {
     private val updateBatteryMethod: Method
     private val updateVolumePercentMethod: Method
     private val updateVolumeMutedMethod: Method
+    private val dequeueActionsMethod: Method
 
     init {
         cls = GomobileLoader.loadNodeClass()
@@ -57,6 +88,7 @@ class GoNodeBridge : NodeBridge {
         updateBatteryMethod = GoReflect.method(cls, "UpdateBatteryPercent", String::class.java)
         updateVolumePercentMethod = GoReflect.method(cls, "UpdateVolumePercent", String::class.java)
         updateVolumeMutedMethod = GoReflect.method(cls, "UpdateVolumeMuted", String::class.java)
+        dequeueActionsMethod = GoReflect.method(cls, "DequeueActions")
 
         // Optional probe to help diagnose missing AAR in runtime.
         runCatching { GoReflect.method(cls, "EnsureLinked").invoke(null) }
@@ -81,6 +113,11 @@ class GoNodeBridge : NodeBridge {
         val mutedText = if (muted) "1" else "0"
         runCatching { updateVolumePercentMethod.invoke(null, percent) }
         runCatching { updateVolumeMutedMethod.invoke(null, mutedText) }
+    }
+
+    override fun dequeueActions(): List<NodeAction> {
+        val raw = runCatching { dequeueActionsMethod.invoke(null) as String }.getOrNull() ?: return emptyList()
+        return NodeActionJson.parseList(raw)
     }
 
     private fun call(fn: () -> String): NodeState {

@@ -30,8 +30,12 @@ class NodeService : Service() {
     @Volatile
     private var volumeRunning = false
 
+    @Volatile
+    private var controlRunning = false
+
     private var batteryReceiver: BroadcastReceiver? = null
     private var volumeThread: Thread? = null
+    private var controlThread: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -76,11 +80,13 @@ class NodeService : Service() {
     private fun startObservers() {
         startBatteryObserver()
         startVolumePoller()
+        startControlPoller()
     }
 
     private fun stopObservers() {
         stopBatteryObserver()
         stopVolumePoller()
+        stopControlPoller()
     }
 
     private fun startBatteryObserver() {
@@ -143,6 +149,66 @@ class NodeService : Service() {
         val t = volumeThread ?: return
         volumeThread = null
         runCatching { t.join(1200) }
+    }
+
+    private fun startControlPoller() {
+        if (controlThread != null) {
+            return
+        }
+        val audio = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+        controlRunning = true
+        val t = Thread {
+            while (controlRunning) {
+                if (!running) {
+                    Thread.sleep(200)
+                    continue
+                }
+                val actions = bridge.dequeueActions()
+                if (actions.isNotEmpty()) {
+                    applyControlActions(audio, actions)
+                }
+                Thread.sleep(250)
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        controlThread = t
+    }
+
+    private fun stopControlPoller() {
+        controlRunning = false
+        val t = controlThread ?: return
+        controlThread = null
+        runCatching { t.join(1200) }
+    }
+
+    private fun applyControlActions(audio: AudioManager, actions: List<NodeAction>) {
+        var volumePercent: NodeAction? = null
+        var muted: NodeAction? = null
+        for (a in actions) {
+            when (a.metric) {
+                "volume_percent" -> volumePercent = a
+                "volume_muted" -> muted = a
+            }
+        }
+
+        volumePercent?.let { act ->
+            val percent = act.value.toIntOrNull()?.coerceIn(0, 100) ?: return@let
+            val max = audio.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
+            val idx = if (max > 0) ((percent * max) + 50) / 100 else 0
+            val clamped = idx.coerceIn(0, max)
+            val wasMuted = audio.isStreamMute(AudioManager.STREAM_MUSIC)
+            runCatching { audio.setStreamVolume(AudioManager.STREAM_MUSIC, clamped, 0) }
+            if (wasMuted) {
+                runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, AudioManager.ADJUST_MUTE, 0) }
+            }
+        }
+        muted?.let { act ->
+            val v = act.value.trim().lowercase()
+            val wantMuted = v == "1" || v == "true" || v == "yes" || v == "y" || v == "on"
+            val direction = if (wantMuted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
+            runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0) }
+        }
     }
 
     private fun startForegroundWithState(text: String) {
