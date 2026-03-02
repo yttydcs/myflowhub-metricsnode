@@ -134,3 +134,84 @@ func TestHandleVarStoreNotifySet_BrightnessPercentOwnerMismatchIgnored(t *testin
 		t.Fatalf("expected 0 actions, got %d", len(actions))
 	}
 }
+
+func TestHandleVarStoreNotifySet_FlashlightEnabledEnqueue(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings: []Binding{{Metric: metrics.MetricFlashlightEnabled, VarName: "sys_flashlight_enabled"}},
+	}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_flashlight_enabled",
+		Value:      "1",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	actions := r.DequeueActions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].Metric != metrics.MetricFlashlightEnabled || actions[0].Value != "1" {
+		t.Fatalf("expected flashlight_enabled=1, got (%q,%q)", actions[0].Metric, actions[0].Value)
+	}
+}
+
+func TestHandleVarStoreNotifySet_ReadOnlyCorrection(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings:          []Binding{{Metric: metrics.MetricNetType, VarName: "sys_net_type"}},
+		VisibilityDefault: protovar.VisibilityPublic,
+	}
+	r.lastMetrics = map[string]string{metrics.MetricNetType: "wifi"}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_net_type",
+		Value:      "ethernet",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	if actions := r.DequeueActions(); len(actions) != 0 {
+		t.Fatalf("expected 0 actions, got %d", len(actions))
+	}
+
+	r.reportMu.Lock()
+	pv := r.lastPublished["sys_net_type"]
+	r.reportMu.Unlock()
+	if pv.Value != "wifi" {
+		t.Fatalf("expected corrected sys_net_type=wifi, got %q", pv.Value)
+	}
+}
+
+func TestHandleVarStoreNotifySet_ReadOnlyCorrectionUnavailable(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings:          []Binding{{Metric: metrics.MetricNetType, VarName: "sys_net_type"}},
+		VisibilityDefault: protovar.VisibilityPublic,
+	}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_net_type",
+		Value:      "ethernet",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	if actions := r.DequeueActions(); len(actions) != 0 {
+		t.Fatalf("expected 0 actions, got %d", len(actions))
+	}
+
+	r.reportMu.Lock()
+	pv := r.lastPublished["sys_net_type"]
+	r.reportMu.Unlock()
+	if pv.Value != "ethernet" {
+		t.Fatalf("expected sys_net_type preserved, got %q", pv.Value)
+	}
+}

@@ -119,20 +119,34 @@ func (r *Runtime) handleVarStoreNotifySet(hdr core.IHeader, resp protovar.VarRes
 		}
 		percent = clampInt(percent, 0, 100)
 		r.enqueueControlAction(metric, strconv.Itoa(percent))
-	case metrics.MetricBatteryPercent:
-		correct, ok := r.currentPublishedMetricValue(metrics.MetricBatteryPercent, cfg)
-		if !ok || correct == "" {
+	case metrics.MetricFlashlightEnabled:
+		enabled, ok := parseBoolish(value)
+		if !ok {
 			if r.log != nil {
-				r.log.Warn("battery_percent correction unavailable", "var", name)
+				r.log.Warn("flashlight_enabled command invalid", "var", name, "value", value)
 			}
 			return
 		}
-		if strings.TrimSpace(resp.Value) == correct {
+		if enabled {
+			r.enqueueControlAction(metric, "1")
+		} else {
+			r.enqueueControlAction(metric, "0")
+		}
+	default:
+		if !metrics.IsReadOnly(metric) {
+			return
+		}
+		correct, ok := r.currentPublishedMetricValue(metric, cfg)
+		if !ok || correct == "" {
+			if r.log != nil {
+				r.log.Warn("readonly metric correction unavailable", "metric", metric, "var", name)
+			}
+			return
+		}
+		if value == correct {
 			return
 		}
 		r.publishVar(auth.NodeID, auth.HubID, name, correct, cfg.VisibilityDefault)
-	default:
-		// ignore unsupported metrics
 	}
 }
 
