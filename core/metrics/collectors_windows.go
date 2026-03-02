@@ -20,6 +20,8 @@ import (
 const (
 	defaultBatteryPollInterval = 30 * time.Second
 	defaultVolumePollInterval  = 1 * time.Second
+	defaultBrightnessPollInterval = 2 * time.Second
+	brightnessErrLogMinInterval   = 60 * time.Second
 )
 
 type systemPowerStatus struct {
@@ -34,6 +36,16 @@ type systemPowerStatus struct {
 var (
 	modKernel32             = syscall.NewLazyDLL("kernel32.dll")
 	procGetSystemPowerStatus = modKernel32.NewProc("GetSystemPowerStatus")
+
+	modUser32          = syscall.NewLazyDLL("user32.dll")
+	procGetDesktopWindow = modUser32.NewProc("GetDesktopWindow")
+	procMonitorFromWindow = modUser32.NewProc("MonitorFromWindow")
+
+	modDxva2                         = syscall.NewLazyDLL("dxva2.dll")
+	procGetNumberOfPhysicalMonitorsFromHMONITOR = modDxva2.NewProc("GetNumberOfPhysicalMonitorsFromHMONITOR")
+	procGetPhysicalMonitorsFromHMONITOR         = modDxva2.NewProc("GetPhysicalMonitorsFromHMONITOR")
+	procDestroyPhysicalMonitor                  = modDxva2.NewProc("DestroyPhysicalMonitor")
+	procGetMonitorBrightness                    = modDxva2.NewProc("GetMonitorBrightness")
 )
 
 func StartPlatformCollectors(ctx context.Context, log *slog.Logger, emit EmitFunc) {
@@ -42,6 +54,7 @@ func StartPlatformCollectors(ctx context.Context, log *slog.Logger, emit EmitFun
 	}
 	go batteryLoop(ctx, log, emit)
 	go volumeLoop(ctx, log, emit)
+	go brightnessLoop(ctx, log, emit)
 }
 
 func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
@@ -123,6 +136,136 @@ func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 			push()
 		}
 	}
+}
+
+type physicalMonitor struct {
+	Handle syscall.Handle
+	Desc   [128]uint16
+}
+
+func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+	ticker := time.NewTicker(defaultBrightnessPollInterval)
+	defer ticker.Stop()
+
+	var lastErrText string
+	var lastErrAt time.Time
+
+	push := func() {
+		percent, ok, err := readPrimaryMonitorBrightnessPercent()
+		if err != nil {
+			errText := err.Error()
+			if errText != lastErrText || time.Since(lastErrAt) >= brightnessErrLogMinInterval {
+				lastErrText = errText
+				lastErrAt = time.Now()
+				if log != nil {
+					log.Warn("read brightness failed", "err", errText)
+				}
+			}
+		}
+		if !ok {
+			emit(MetricBrightnessPercent, "-1")
+			return
+		}
+		emit(MetricBrightnessPercent, fmt.Sprintf("%d", percent))
+	}
+
+	push()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			push()
+		}
+	}
+}
+
+const monitorDefaultToPrimary = 1
+
+func readPrimaryMonitorBrightnessPercent() (percent int, ok bool, _ error) {
+	hwnd, _, err := procGetDesktopWindow.Call()
+	if hwnd == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("GetDesktopWindow failed")
+	}
+
+	hmon, _, err := procMonitorFromWindow.Call(hwnd, monitorDefaultToPrimary)
+	if hmon == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("MonitorFromWindow failed")
+	}
+
+	var count uint32
+	r1, _, err := procGetNumberOfPhysicalMonitorsFromHMONITOR.Call(hmon, uintptr(unsafe.Pointer(&count)))
+	if r1 == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("GetNumberOfPhysicalMonitorsFromHMONITOR failed")
+	}
+	if count == 0 {
+		return 0, false, errors.New("no physical monitors")
+	}
+
+	monitors := make([]physicalMonitor, int(count))
+	r1, _, err = procGetPhysicalMonitorsFromHMONITOR.Call(hmon, uintptr(count), uintptr(unsafe.Pointer(&monitors[0])))
+	if r1 == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("GetPhysicalMonitorsFromHMONITOR failed")
+	}
+
+	defer func() {
+		for i := range monitors {
+			h := monitors[i].Handle
+			if h == 0 {
+				continue
+			}
+			// Best-effort cleanup; ignore destroy errors.
+			_, _, _ = procDestroyPhysicalMonitor.Call(uintptr(h))
+		}
+	}()
+
+	h := monitors[0].Handle
+	if h == 0 {
+		return 0, false, errors.New("physical monitor handle is 0")
+	}
+
+	var min, cur, max uint32
+	r1, _, err = procGetMonitorBrightness.Call(
+		uintptr(h),
+		uintptr(unsafe.Pointer(&min)),
+		uintptr(unsafe.Pointer(&cur)),
+		uintptr(unsafe.Pointer(&max)),
+	)
+	if r1 == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("GetMonitorBrightness failed")
+	}
+	if max <= min {
+		return 0, false, fmt.Errorf("brightness range invalid: min=%d max=%d", min, max)
+	}
+	if cur < min {
+		cur = min
+	}
+	if cur > max {
+		cur = max
+	}
+	percent = int(((cur - min) * 100) / (max - min))
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+	return percent, true, nil
 }
 
 func readBatteryPercent() (percent int, hasBattery bool, _ error) {

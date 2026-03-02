@@ -26,3 +26,7 @@
 *.jar
 /android/app/libs/
 
+# Gradle wrapper (android/)
+!/android/gradle/wrapper/gradle-wrapper.jar
+!/android/gradle/wrapper/gradle-wrapper-shared.jar
+

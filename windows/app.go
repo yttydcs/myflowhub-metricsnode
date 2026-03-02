@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -46,16 +48,44 @@ func (a *App) startup(ctx context.Context) {
 	}
 	a.rt = rt
 
+	defaultDeviceID, err := generateDeviceID("win")
+	if err != nil && a.log != nil {
+		a.log.Warn("generate default device_id failed", "err", err.Error())
+	}
+
 	bootPath := filepath.Join(rt.WorkDir(), "bootstrap.json")
 	boot, err := configstore.New(bootPath, map[string]string{
 		"hub.addr":       "127.0.0.1:9000",
-		"auth.device_id": "",
+		"auth.device_id": defaultDeviceID,
 	}, a.log)
 	if err != nil {
 		a.log.Error("bootstrap config init failed", "err", err.Error())
 		return
 	}
+
+	// Ensure device_id is non-empty. This prevents Auth actions from failing due to missing input.
+	if cur, _ := boot.Get("auth.device_id"); strings.TrimSpace(cur) == "" {
+		id, err := generateDeviceID("win")
+		if err != nil {
+			a.log.Warn("generate device_id failed", "err", err.Error())
+		} else {
+			_ = boot.Set("auth.device_id", id)
+		}
+	}
 	a.boot = boot
+}
+
+func generateDeviceID(prefix string) (string, error) {
+	b := make([]byte, 12)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	id := hex.EncodeToString(b)
+	p := strings.TrimSpace(prefix)
+	if p == "" {
+		return id, nil
+	}
+	return p + "-" + id, nil
 }
 
 type BootstrapDTO struct {

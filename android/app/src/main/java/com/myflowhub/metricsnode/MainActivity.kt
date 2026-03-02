@@ -47,7 +47,8 @@ private fun MetricsNodeApp() {
     val prefs = remember { context.getSharedPreferences("metricsnode", Context.MODE_PRIVATE) }
 
     var addr by remember { mutableStateOf(prefs.getString("hub_addr", "127.0.0.1:9000") ?: "127.0.0.1:9000") }
-    var deviceId by remember { mutableStateOf(prefs.getString("device_id", "") ?: "") }
+    val initialDeviceId = remember { DeviceId.ensure(prefs, "android") }
+    var deviceId by remember { mutableStateOf(initialDeviceId) }
 
     val bridge: NodeBridge = remember {
         try {
@@ -110,7 +111,7 @@ private fun MetricsNodeApp() {
                     value = deviceId,
                     onValueChange = {
                         deviceId = it
-                        prefs.edit().putString("device_id", it).apply()
+                        prefs.edit().putString(DeviceId.PrefKey, it).apply()
                     },
                     label = { Text("Device ID") },
                 )

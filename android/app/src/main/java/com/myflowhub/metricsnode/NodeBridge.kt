@@ -41,6 +41,7 @@ interface NodeBridge {
 
     fun updateBatteryPercent(percent: Int)
     fun updateVolume(volumePercent: Int, muted: Boolean)
+    fun updateBrightnessPercent(percent: Int)
 
     fun dequeueActions(): List<NodeAction>
 }
@@ -64,6 +65,8 @@ class StubNodeBridge : NodeBridge {
 
     override fun updateVolume(volumePercent: Int, muted: Boolean) {}
 
+    override fun updateBrightnessPercent(percent: Int) {}
+
     override fun dequeueActions(): List<NodeAction> = emptyList()
 }
 
@@ -77,6 +80,7 @@ class GoNodeBridge : NodeBridge {
     private val updateBatteryMethod: Method
     private val updateVolumePercentMethod: Method
     private val updateVolumeMutedMethod: Method
+    private val updateBrightnessMethod: Method?
     private val dequeueActionsMethod: Method
 
     init {
@@ -88,6 +92,7 @@ class GoNodeBridge : NodeBridge {
         updateBatteryMethod = GoReflect.method(cls, "UpdateBatteryPercent", String::class.java)
         updateVolumePercentMethod = GoReflect.method(cls, "UpdateVolumePercent", String::class.java)
         updateVolumeMutedMethod = GoReflect.method(cls, "UpdateVolumeMuted", String::class.java)
+        updateBrightnessMethod = runCatching { GoReflect.method(cls, "UpdateBrightnessPercent", String::class.java) }.getOrNull()
         dequeueActionsMethod = GoReflect.method(cls, "DequeueActions")
 
         // Optional probe to help diagnose missing AAR in runtime.
@@ -113,6 +118,12 @@ class GoNodeBridge : NodeBridge {
         val mutedText = if (muted) "1" else "0"
         runCatching { updateVolumePercentMethod.invoke(null, percent) }
         runCatching { updateVolumeMutedMethod.invoke(null, mutedText) }
+    }
+
+    override fun updateBrightnessPercent(percent: Int) {
+        val text = if (percent < 0) "-1" else percent.coerceIn(0, 100).toString()
+        val method = updateBrightnessMethod ?: return
+        runCatching { method.invoke(null, text) }
     }
 
     override fun dequeueActions(): List<NodeAction> {

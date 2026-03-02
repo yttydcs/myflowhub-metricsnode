@@ -193,6 +193,31 @@ func UpdateVolumeMuted(muted string) {
 	}
 }
 
+func UpdateBrightnessPercent(percent string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	p := strings.TrimSpace(percent)
+	if p == "" {
+		return
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return
+	}
+	if n < 0 {
+		r.UpdateMetric(metrics.MetricBrightnessPercent, "-1")
+		return
+	}
+	if n > 100 {
+		n = 100
+	}
+	r.UpdateMetric(metrics.MetricBrightnessPercent, fmt.Sprintf("%d", n))
+}
+
 func GetLastError() string {
 	mu.Lock()
 	defer mu.Unlock()

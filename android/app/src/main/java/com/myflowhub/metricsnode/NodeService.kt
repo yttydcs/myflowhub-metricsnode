@@ -13,6 +13,7 @@ import android.media.AudioManager
 import android.os.BatteryManager
 import android.os.Build
 import android.os.IBinder
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.io.File
@@ -33,9 +34,13 @@ class NodeService : Service() {
     @Volatile
     private var controlRunning = false
 
+    @Volatile
+    private var brightnessRunning = false
+
     private var batteryReceiver: BroadcastReceiver? = null
     private var volumeThread: Thread? = null
     private var controlThread: Thread? = null
+    private var brightnessThread: Thread? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -43,7 +48,13 @@ class NodeService : Service() {
         when (intent?.action) {
             ACTION_START -> {
                 val addr = intent.getStringExtra(EXTRA_ADDR) ?: ""
-                val deviceId = intent.getStringExtra(EXTRA_DEVICE_ID) ?: ""
+                val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+                var deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)?.trim().orEmpty()
+                if (deviceId.isBlank()) {
+                    deviceId = DeviceId.ensure(prefs, "android")
+                } else {
+                    prefs.edit().putString(DeviceId.PrefKey, deviceId).apply()
+                }
                 val workDir = File(filesDir, "metricsnode").absolutePath
 
                 startForegroundWithState("Starting…")
@@ -80,12 +91,14 @@ class NodeService : Service() {
     private fun startObservers() {
         startBatteryObserver()
         startVolumePoller()
+        startBrightnessPoller()
         startControlPoller()
     }
 
     private fun stopObservers() {
         stopBatteryObserver()
         stopVolumePoller()
+        stopBrightnessPoller()
         stopControlPoller()
     }
 
@@ -149,6 +162,50 @@ class NodeService : Service() {
         val t = volumeThread ?: return
         volumeThread = null
         runCatching { t.join(1200) }
+    }
+
+    private fun startBrightnessPoller() {
+        if (brightnessThread != null) {
+            return
+        }
+        brightnessRunning = true
+        val t = Thread {
+            var lastPercent: Int? = null
+            while (brightnessRunning) {
+                if (!running) {
+                    Thread.sleep(200)
+                    continue
+                }
+                val percent = readBrightnessPercent()
+                if (lastPercent != percent) {
+                    bridge.updateBrightnessPercent(percent)
+                    lastPercent = percent
+                }
+                Thread.sleep(1000)
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        brightnessThread = t
+    }
+
+    private fun stopBrightnessPoller() {
+        brightnessRunning = false
+        val t = brightnessThread ?: return
+        brightnessThread = null
+        runCatching { t.join(1200) }
+    }
+
+    private fun readBrightnessPercent(): Int {
+        val raw = runCatching {
+            Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, -1)
+        }.getOrDefault(-1)
+        if (raw < 0) {
+            return -1
+        }
+        val clamped = raw.coerceIn(0, 255)
+        val percent = (clamped * 100 + 127) / 255
+        return percent.coerceIn(0, 100)
     }
 
     private fun startControlPoller() {

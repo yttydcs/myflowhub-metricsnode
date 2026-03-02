@@ -38,7 +38,31 @@ func defaultBindings() []Binding {
 		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
 		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
 		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
+		{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"},
 	}
+}
+
+func legacyDefaultBindings() []Binding {
+	return []Binding{
+		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
+		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
+		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
+	}
+}
+
+func equalBindings(a, b []Binding) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if strings.TrimSpace(a[i].Metric) != strings.TrimSpace(b[i].Metric) {
+			return false
+		}
+		if strings.TrimSpace(a[i].VarName) != strings.TrimSpace(b[i].VarName) {
+			return false
+		}
+	}
+	return true
 }
 
 func defaultBindingsJSON() string {
@@ -106,7 +130,7 @@ func validateBindings(list []Binding) ([]Binding, error) {
 
 func supportedMetric(metric string) bool {
 	switch metric {
-	case metrics.MetricBatteryPercent, metrics.MetricVolumePercent, metrics.MetricVolumeMuted:
+	case metrics.MetricBatteryPercent, metrics.MetricVolumePercent, metrics.MetricVolumeMuted, metrics.MetricBrightnessPercent:
 		return true
 	default:
 		return false
@@ -128,6 +152,18 @@ func (r *Runtime) initRuntimeConfig() error {
 	if err != nil {
 		return err
 	}
+
+	// Safe migration: if the user still has the legacy default bindings (battery + volume),
+	// automatically upgrade to include brightness. Never overwrite custom bindings.
+	if raw, ok := store.Get(KeyMetricsBindingsJSON); ok {
+		if list, err := parseBindingsJSON(raw); err == nil && equalBindings(list, legacyDefaultBindings()) {
+			_ = store.Set(KeyMetricsBindingsJSON, defaultBindingsJSON())
+			if r.log != nil {
+				r.log.Info("migrated metrics.bindings_json to include brightness")
+			}
+		}
+	}
+
 	r.cfgStore = store
 	r.reloadRuntimeConfig("init", "")
 	return nil
