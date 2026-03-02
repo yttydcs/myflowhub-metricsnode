@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"math"
 	goruntime "runtime"
+	"strings"
 	"syscall"
 	"time"
 	"unsafe"
@@ -16,13 +17,20 @@ import (
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
 	"github.com/moutend/go-wca/pkg/wca"
+	"golang.org/x/sys/windows"
 )
 
 const (
 	defaultBatteryPollInterval    = 30 * time.Second
 	defaultVolumePollInterval     = 1 * time.Second
 	defaultBrightnessPollInterval = 2 * time.Second
+	defaultCPUPollInterval        = 2 * time.Second
+	defaultMemPollInterval        = 2 * time.Second
+	defaultNetPollInterval        = 5 * time.Second
 	brightnessErrLogMinInterval   = 60 * time.Second
+	cpuErrLogMinInterval          = 60 * time.Second
+	memErrLogMinInterval          = 60 * time.Second
+	netErrLogMinInterval          = 60 * time.Second
 )
 
 type systemPowerStatus struct {
@@ -37,6 +45,8 @@ type systemPowerStatus struct {
 var (
 	modKernel32              = syscall.NewLazyDLL("kernel32.dll")
 	procGetSystemPowerStatus = modKernel32.NewProc("GetSystemPowerStatus")
+	procGetSystemTimes       = modKernel32.NewProc("GetSystemTimes")
+	procGlobalMemoryStatusEx = modKernel32.NewProc("GlobalMemoryStatusEx")
 
 	modUser32             = syscall.NewLazyDLL("user32.dll")
 	procGetDesktopWindow  = modUser32.NewProc("GetDesktopWindow")
@@ -56,6 +66,9 @@ func StartPlatformCollectors(ctx context.Context, log *slog.Logger, emit EmitFun
 	go batteryLoop(ctx, log, emit)
 	go volumeLoop(ctx, log, emit)
 	go brightnessLoop(ctx, log, emit)
+	go cpuLoop(ctx, log, emit)
+	go memLoop(ctx, log, emit)
+	go netLoop(ctx, log, emit)
 }
 
 func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
@@ -63,18 +76,229 @@ func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 	defer ticker.Stop()
 
 	push := func() {
-		percent, hasBattery, err := readBatteryPercent()
+		st, err := readSystemPowerStatus()
 		if err != nil {
 			if log != nil {
 				log.Warn("read battery failed", "err", err.Error())
 			}
-			return
-		}
-		if !hasBattery {
 			emit(MetricBatteryPercent, "-1")
+			emit(MetricBatteryOnAC, "-1")
+			emit(MetricBatteryCharging, "-1")
 			return
 		}
-		emit(MetricBatteryPercent, fmt.Sprintf("%d", percent))
+
+		percent, hasBattery, err := batteryPercentFromStatus(st)
+		if err != nil {
+			if log != nil {
+				log.Warn("read battery percent failed", "err", err.Error())
+			}
+			emit(MetricBatteryPercent, "-1")
+		} else if !hasBattery {
+			emit(MetricBatteryPercent, "-1")
+		} else {
+			emit(MetricBatteryPercent, fmt.Sprintf("%d", percent))
+		}
+
+		acValue := acLineStatusBoolish(st.ACLineStatus)
+		emit(MetricBatteryOnAC, acValue)
+		emit(MetricBatteryCharging, acValue)
+	}
+
+	push()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			push()
+		}
+	}
+}
+
+type fileTime struct {
+	LowDateTime  uint32
+	HighDateTime uint32
+}
+
+func (t fileTime) uint64() uint64 {
+	return (uint64(t.HighDateTime) << 32) | uint64(t.LowDateTime)
+}
+
+func cpuLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+	ticker := time.NewTicker(defaultCPUPollInterval)
+	defer ticker.Stop()
+
+	var lastErrText string
+	var lastErrAt time.Time
+
+	prevIdle, prevKernel, prevUser, err := readSystemTimes()
+	havePrev := err == nil
+	if err != nil {
+		if log != nil {
+			log.Warn("read cpu failed", "err", err.Error())
+		}
+		emit(MetricCPUPercent, "-1")
+	} else {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+
+	push := func() {
+		idle, kernel, user, err := readSystemTimes()
+		if err != nil {
+			errText := err.Error()
+			if errText != lastErrText || time.Since(lastErrAt) >= cpuErrLogMinInterval {
+				lastErrText = errText
+				lastErrAt = time.Now()
+				if log != nil {
+					log.Warn("read cpu failed", "err", errText)
+				}
+			}
+			emit(MetricCPUPercent, "-1")
+			return
+		}
+		lastErrText = ""
+		lastErrAt = time.Time{}
+
+		if !havePrev {
+			prevIdle, prevKernel, prevUser = idle, kernel, user
+			havePrev = true
+			emit(MetricCPUPercent, "-1")
+			return
+		}
+		if idle < prevIdle || kernel < prevKernel || user < prevUser {
+			prevIdle, prevKernel, prevUser = idle, kernel, user
+			emit(MetricCPUPercent, "-1")
+			return
+		}
+
+		dIdle := idle - prevIdle
+		dKernel := kernel - prevKernel
+		dUser := user - prevUser
+		prevIdle, prevKernel, prevUser = idle, kernel, user
+
+		total := dKernel + dUser
+		if total == 0 || dIdle > total {
+			emit(MetricCPUPercent, "-1")
+			return
+		}
+
+		// On Windows, kernel time includes idle time; busy = (kernel+user)-idle.
+		busy := total - dIdle
+		percent := int(math.Round(float64(busy) * 100 / float64(total)))
+		if percent < 0 {
+			percent = 0
+		}
+		if percent > 100 {
+			percent = 100
+		}
+		emit(MetricCPUPercent, fmt.Sprintf("%d", percent))
+	}
+
+	push()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			push()
+		}
+	}
+}
+
+type memoryStatusEx struct {
+	Length               uint32
+	MemoryLoad           uint32
+	TotalPhys            uint64
+	AvailPhys            uint64
+	TotalPageFile        uint64
+	AvailPageFile        uint64
+	TotalVirtual         uint64
+	AvailVirtual         uint64
+	AvailExtendedVirtual uint64
+}
+
+func memLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+	ticker := time.NewTicker(defaultMemPollInterval)
+	defer ticker.Stop()
+
+	var lastErrText string
+	var lastErrAt time.Time
+
+	push := func() {
+		percent, ok, err := readMemoryLoadPercent()
+		if err != nil {
+			errText := err.Error()
+			if errText != lastErrText || time.Since(lastErrAt) >= memErrLogMinInterval {
+				lastErrText = errText
+				lastErrAt = time.Now()
+				if log != nil {
+					log.Warn("read memory failed", "err", errText)
+				}
+			}
+			emit(MetricMemPercent, "-1")
+			return
+		}
+		lastErrText = ""
+		lastErrAt = time.Time{}
+		if !ok {
+			emit(MetricMemPercent, "-1")
+			return
+		}
+		if percent < 0 {
+			percent = 0
+		}
+		if percent > 100 {
+			percent = 100
+		}
+		emit(MetricMemPercent, fmt.Sprintf("%d", percent))
+	}
+
+	push()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			push()
+		}
+	}
+}
+
+func netLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+	ticker := time.NewTicker(defaultNetPollInterval)
+	defer ticker.Stop()
+
+	var lastErrText string
+	var lastErrAt time.Time
+
+	push := func() {
+		online, netType, err := readNetStatus()
+		if err != nil {
+			errText := err.Error()
+			if errText != lastErrText || time.Since(lastErrAt) >= netErrLogMinInterval {
+				lastErrText = errText
+				lastErrAt = time.Now()
+				if log != nil {
+					log.Warn("read network failed", "err", errText)
+				}
+			}
+			emit(MetricNetOnline, "-1")
+			emit(MetricNetType, "-1")
+			return
+		}
+
+		lastErrText = ""
+		lastErrAt = time.Time{}
+		if online {
+			emit(MetricNetOnline, "1")
+		} else {
+			emit(MetricNetOnline, "0")
+		}
+		emit(MetricNetType, netType)
 	}
 
 	push()
@@ -494,16 +718,19 @@ func variantNumberToInt(v interface{}) (int, bool) {
 	}
 }
 
-func readBatteryPercent() (percent int, hasBattery bool, _ error) {
+func readSystemPowerStatus() (systemPowerStatus, error) {
 	var st systemPowerStatus
 	r1, _, err := procGetSystemPowerStatus.Call(uintptr(unsafe.Pointer(&st)))
 	if r1 == 0 {
 		if err != nil && !errors.Is(err, syscall.Errno(0)) {
-			return 0, false, err
+			return systemPowerStatus{}, err
 		}
-		return 0, false, errors.New("GetSystemPowerStatus failed")
+		return systemPowerStatus{}, errors.New("GetSystemPowerStatus failed")
 	}
+	return st, nil
+}
 
+func batteryPercentFromStatus(st systemPowerStatus) (percent int, hasBattery bool, _ error) {
 	// Docs:
 	// - BatteryFlag 128 means "No system battery".
 	// - BatteryLifePercent 255 means unknown.
@@ -514,6 +741,142 @@ func readBatteryPercent() (percent int, hasBattery bool, _ error) {
 		return 0, false, fmt.Errorf("battery percent out of range: %d", st.BatteryLifePercent)
 	}
 	return int(st.BatteryLifePercent), true, nil
+}
+
+func acLineStatusBoolish(v byte) string {
+	switch v {
+	case 0:
+		return "0"
+	case 1:
+		return "1"
+	default:
+		return "-1"
+	}
+}
+
+func readSystemTimes() (idle, kernel, user uint64, _ error) {
+	var idleFT fileTime
+	var kernelFT fileTime
+	var userFT fileTime
+	r1, _, err := procGetSystemTimes.Call(
+		uintptr(unsafe.Pointer(&idleFT)),
+		uintptr(unsafe.Pointer(&kernelFT)),
+		uintptr(unsafe.Pointer(&userFT)),
+	)
+	if r1 == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, 0, 0, err
+		}
+		return 0, 0, 0, errors.New("GetSystemTimes failed")
+	}
+	return idleFT.uint64(), kernelFT.uint64(), userFT.uint64(), nil
+}
+
+func readMemoryLoadPercent() (percent int, ok bool, _ error) {
+	var st memoryStatusEx
+	st.Length = uint32(unsafe.Sizeof(st))
+	r1, _, err := procGlobalMemoryStatusEx.Call(uintptr(unsafe.Pointer(&st)))
+	if r1 == 0 {
+		if err != nil && !errors.Is(err, syscall.Errno(0)) {
+			return 0, false, err
+		}
+		return 0, false, errors.New("GlobalMemoryStatusEx failed")
+	}
+	if st.MemoryLoad > 100 {
+		return 0, false, fmt.Errorf("memory load out of range: %d", st.MemoryLoad)
+	}
+	return int(st.MemoryLoad), true, nil
+}
+
+const (
+	ifTypeWWANPP  = 243
+	ifTypeWWANPP2 = 244
+)
+
+func readNetStatus() (online bool, netType string, _ error) {
+	flags := uint32(windows.GAA_FLAG_SKIP_ANYCAST | windows.GAA_FLAG_SKIP_MULTICAST | windows.GAA_FLAG_SKIP_DNS_SERVER | windows.GAA_FLAG_SKIP_FRIENDLY_NAME)
+	size := uint32(15 * 1024)
+	for i := 0; i < 3; i++ {
+		buf := make([]byte, size)
+		aa := (*windows.IpAdapterAddresses)(unsafe.Pointer(&buf[0]))
+		err := windows.GetAdaptersAddresses(windows.AF_UNSPEC, flags, 0, aa, &size)
+		if err == windows.ERROR_BUFFER_OVERFLOW {
+			continue
+		}
+		if err != nil {
+			return false, "", err
+		}
+
+		bestRank := -1
+		bestType := "unknown"
+		haveCandidate := false
+		for p := aa; p != nil; p = p.Next {
+			if p == nil {
+				break
+			}
+			if p.OperStatus != windows.IfOperStatusUp {
+				continue
+			}
+			if p.IfType == windows.IF_TYPE_SOFTWARE_LOOPBACK || p.IfType == windows.IF_TYPE_TUNNEL {
+				continue
+			}
+			if p.FirstUnicastAddress == nil {
+				continue
+			}
+			haveCandidate = true
+			nt := netTypeFromIfType(p.IfType)
+			rank := netTypeRank(nt)
+			if rank > bestRank {
+				bestRank = rank
+				bestType = nt
+			}
+		}
+
+		if !haveCandidate {
+			return false, "none", nil
+		}
+		if strings.TrimSpace(bestType) == "" {
+			bestType = "unknown"
+		}
+		return true, bestType, nil
+	}
+	return false, "", errors.New("GetAdaptersAddresses buffer overflow")
+}
+
+func netTypeFromIfType(ifType uint32) string {
+	switch ifType {
+	case windows.IF_TYPE_IEEE80211:
+		return "wifi"
+	case windows.IF_TYPE_ETHERNET_CSMACD:
+		return "ethernet"
+	case ifTypeWWANPP, ifTypeWWANPP2:
+		return "cellular"
+	default:
+		return "unknown"
+	}
+}
+
+func netTypeRank(netType string) int {
+	switch netType {
+	case "ethernet":
+		return 3
+	case "wifi":
+		return 2
+	case "cellular":
+		return 1
+	case "unknown":
+		return 0
+	default:
+		return -1
+	}
+}
+
+func readBatteryPercent() (percent int, hasBattery bool, _ error) {
+	st, err := readSystemPowerStatus()
+	if err != nil {
+		return 0, false, err
+	}
+	return batteryPercentFromStatus(st)
 }
 
 func openDefaultEndpointVolume() (*wca.IAudioEndpointVolume, func(), error) {
