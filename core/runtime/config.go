@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	goruntime "runtime"
 	"strings"
 
 	protovar "github.com/yttydcs/myflowhub-proto/protocol/varstore"
@@ -34,19 +35,42 @@ type runtimeConfig struct {
 }
 
 func defaultBindings() []Binding {
+	return defaultBindingsForOS(goruntime.GOOS)
+}
+
+func defaultBindingsForOS(goos string) []Binding {
+	list := []Binding{
+		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
+		{Metric: metrics.MetricBatteryCharging, VarName: "sys_battery_charging"},
+		{Metric: metrics.MetricBatteryOnAC, VarName: "sys_battery_on_ac"},
+		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
+		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
+		{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"},
+		{Metric: metrics.MetricNetOnline, VarName: "sys_net_online"},
+		{Metric: metrics.MetricNetType, VarName: "sys_net_type"},
+		{Metric: metrics.MetricCPUPercent, VarName: "sys_cpu_percent"},
+		{Metric: metrics.MetricMemPercent, VarName: "sys_mem_percent"},
+	}
+	if goos == "android" {
+		list = append(list, Binding{Metric: metrics.MetricFlashlightEnabled, VarName: "sys_flashlight_enabled"})
+	}
+	return list
+}
+
+func legacyDefaultBindingsV0() []Binding {
+	return []Binding{
+		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
+		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
+		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
+	}
+}
+
+func legacyDefaultBindingsV1() []Binding {
 	return []Binding{
 		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
 		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
 		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
 		{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"},
-	}
-}
-
-func legacyDefaultBindings() []Binding {
-	return []Binding{
-		{Metric: metrics.MetricBatteryPercent, VarName: "sys_battery_percent"},
-		{Metric: metrics.MetricVolumePercent, VarName: "sys_volume_percent"},
-		{Metric: metrics.MetricVolumeMuted, VarName: "sys_volume_muted"},
 	}
 }
 
@@ -130,7 +154,13 @@ func validateBindings(list []Binding) ([]Binding, error) {
 
 func supportedMetric(metric string) bool {
 	switch metric {
-	case metrics.MetricBatteryPercent, metrics.MetricVolumePercent, metrics.MetricVolumeMuted, metrics.MetricBrightnessPercent:
+	case metrics.MetricBatteryPercent, metrics.MetricBatteryCharging, metrics.MetricBatteryOnAC:
+		return true
+	case metrics.MetricNetOnline, metrics.MetricNetType:
+		return true
+	case metrics.MetricCPUPercent, metrics.MetricMemPercent:
+		return true
+	case metrics.MetricVolumePercent, metrics.MetricVolumeMuted, metrics.MetricBrightnessPercent, metrics.MetricFlashlightEnabled:
 		return true
 	default:
 		return false
@@ -153,13 +183,13 @@ func (r *Runtime) initRuntimeConfig() error {
 		return err
 	}
 
-	// Safe migration: if the user still has the legacy default bindings (battery + volume),
-	// automatically upgrade to include brightness. Never overwrite custom bindings.
+	// Safe migration: if the user still has legacy default bindings, automatically upgrade to
+	// include P0 metrics (and flashlight on Android). Never overwrite custom bindings.
 	if raw, ok := store.Get(KeyMetricsBindingsJSON); ok {
-		if list, err := parseBindingsJSON(raw); err == nil && equalBindings(list, legacyDefaultBindings()) {
+		if list, err := parseBindingsJSON(raw); err == nil && (equalBindings(list, legacyDefaultBindingsV0()) || equalBindings(list, legacyDefaultBindingsV1())) {
 			_ = store.Set(KeyMetricsBindingsJSON, defaultBindingsJSON())
 			if r.log != nil {
-				r.log.Info("migrated metrics.bindings_json to include brightness")
+				r.log.Info("migrated metrics.bindings_json to include P0 metrics")
 			}
 		}
 	}

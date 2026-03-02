@@ -13,8 +13,8 @@ func TestParseBindingsJSON_Defaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(list) != 4 {
-		t.Fatalf("expected 4 defaults, got %d", len(list))
+	if len(list) != len(defaultBindings()) {
+		t.Fatalf("expected %d defaults, got %d", len(defaultBindings()), len(list))
 	}
 }
 
@@ -80,34 +80,46 @@ func TestTransformMetricValue_NoBatteryValue(t *testing.T) {
 }
 
 func TestInitRuntimeConfig_MigrateLegacyBindings(t *testing.T) {
-	dir := t.TempDir()
-	legacyRaw, err := json.Marshal(legacyDefaultBindings())
-	if err != nil {
-		t.Fatalf("unexpected marshal error: %v", err)
+	tests := []struct {
+		name     string
+		bindings []Binding
+	}{
+		{name: "v0", bindings: legacyDefaultBindingsV0()},
+		{name: "v1", bindings: legacyDefaultBindingsV1()},
 	}
 
-	path := filepath.Join(dir, "runtime_config.json")
-	initial := map[string]string{
-		KeyMetricsBindingsJSON:      string(legacyRaw),
-		KeyMetricsVisibilityDefault: "public",
-		KeyMetricsBatteryNoBattery:  "-1",
-	}
-	raw, _ := json.MarshalIndent(initial, "", "  ")
-	if err := os.WriteFile(path, raw, 0o600); err != nil {
-		t.Fatalf("write runtime_config.json failed: %v", err)
-	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			legacyRaw, err := json.Marshal(tt.bindings)
+			if err != nil {
+				t.Fatalf("unexpected marshal error: %v", err)
+			}
 
-	rt, err := New(dir, slog.Default())
-	if err != nil {
-		t.Fatalf("runtime init failed: %v", err)
-	}
+			path := filepath.Join(dir, "runtime_config.json")
+			initial := map[string]string{
+				KeyMetricsBindingsJSON:      string(legacyRaw),
+				KeyMetricsVisibilityDefault: "public",
+				KeyMetricsBatteryNoBattery:  "-1",
+			}
+			raw, _ := json.MarshalIndent(initial, "", "  ")
+			if err := os.WriteFile(path, raw, 0o600); err != nil {
+				t.Fatalf("write runtime_config.json failed: %v", err)
+			}
 
-	got, ok := rt.RuntimeConfigGet(KeyMetricsBindingsJSON)
-	if !ok {
-		t.Fatalf("expected bindings_json present")
-	}
-	if got != defaultBindingsJSON() {
-		t.Fatalf("expected migrated bindings_json, got %q", got)
+			rt, err := New(dir, slog.Default())
+			if err != nil {
+				t.Fatalf("runtime init failed: %v", err)
+			}
+
+			got, ok := rt.RuntimeConfigGet(KeyMetricsBindingsJSON)
+			if !ok {
+				t.Fatalf("expected bindings_json present")
+			}
+			if got != defaultBindingsJSON() {
+				t.Fatalf("expected migrated bindings_json, got %q", got)
+			}
+		})
 	}
 }
 
