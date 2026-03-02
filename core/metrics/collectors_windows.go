@@ -14,12 +14,13 @@ import (
 	"unsafe"
 
 	"github.com/go-ole/go-ole"
+	"github.com/go-ole/go-ole/oleutil"
 	"github.com/moutend/go-wca/pkg/wca"
 )
 
 const (
-	defaultBatteryPollInterval = 30 * time.Second
-	defaultVolumePollInterval  = 1 * time.Second
+	defaultBatteryPollInterval    = 30 * time.Second
+	defaultVolumePollInterval     = 1 * time.Second
 	defaultBrightnessPollInterval = 2 * time.Second
 	brightnessErrLogMinInterval   = 60 * time.Second
 )
@@ -34,14 +35,14 @@ type systemPowerStatus struct {
 }
 
 var (
-	modKernel32             = syscall.NewLazyDLL("kernel32.dll")
+	modKernel32              = syscall.NewLazyDLL("kernel32.dll")
 	procGetSystemPowerStatus = modKernel32.NewProc("GetSystemPowerStatus")
 
-	modUser32          = syscall.NewLazyDLL("user32.dll")
-	procGetDesktopWindow = modUser32.NewProc("GetDesktopWindow")
+	modUser32             = syscall.NewLazyDLL("user32.dll")
+	procGetDesktopWindow  = modUser32.NewProc("GetDesktopWindow")
 	procMonitorFromWindow = modUser32.NewProc("MonitorFromWindow")
 
-	modDxva2                         = syscall.NewLazyDLL("dxva2.dll")
+	modDxva2                                    = syscall.NewLazyDLL("dxva2.dll")
 	procGetNumberOfPhysicalMonitorsFromHMONITOR = modDxva2.NewProc("GetNumberOfPhysicalMonitorsFromHMONITOR")
 	procGetPhysicalMonitorsFromHMONITOR         = modDxva2.NewProc("GetPhysicalMonitorsFromHMONITOR")
 	procDestroyPhysicalMonitor                  = modDxva2.NewProc("DestroyPhysicalMonitor")
@@ -144,29 +145,109 @@ type physicalMonitor struct {
 }
 
 func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+	// WMI relies on COM; keep WMI calls inside this goroutine and pinned to one OS thread.
+	goruntime.LockOSThread()
+	defer goruntime.UnlockOSThread()
+
+	wmiEnabled := false
+	if err := ole.CoInitialize(0); err != nil {
+		// Treat S_FALSE (already initialized) as success; it's safe and still requires CoUninitialize.
+		if oe, ok := err.(*ole.OleError); !ok || oe.Code() != 1 {
+			if log != nil {
+				log.Warn("ole init failed (brightness)", "err", err.Error())
+			}
+		} else {
+			wmiEnabled = true
+		}
+	} else {
+		wmiEnabled = true
+	}
+	if wmiEnabled {
+		defer ole.CoUninitialize()
+	}
+
 	ticker := time.NewTicker(defaultBrightnessPollInterval)
 	defer ticker.Stop()
 
 	var lastErrText string
 	var lastErrAt time.Time
+	var dxva2DisabledUntil time.Time
+
+	var wmiSvc *ole.IDispatch
+	if wmiEnabled {
+		if svc, err := connectWMIRootWMI(); err == nil {
+			wmiSvc = svc
+		} else if log != nil {
+			log.Warn("wmi connect failed (brightness); fallback to dxva2 only", "err", err.Error())
+		}
+	}
+	defer func() {
+		if wmiSvc != nil {
+			wmiSvc.Release()
+		}
+	}()
 
 	push := func() {
-		percent, ok, err := readPrimaryMonitorBrightnessPercent()
-		if err != nil {
-			errText := err.Error()
-			if errText != lastErrText || time.Since(lastErrAt) >= brightnessErrLogMinInterval {
+		now := time.Now()
+
+		var dxva2Err error
+		var wmiErr error
+
+		// 1) Try DXVA2 first, unless temporarily disabled due to repeated failures.
+		if now.After(dxva2DisabledUntil) {
+			if percent, ok, err := readPrimaryMonitorBrightnessPercentDXVA2(); ok {
+				emit(MetricBrightnessPercent, fmt.Sprintf("%d", percent))
+				return
+			} else if err != nil {
+				dxva2Err = err
+			}
+		}
+
+		// 2) WMI fallback (common for laptop internal panels).
+		if wmiSvc != nil {
+			if percent, ok, err := readBrightnessPercentWMI(wmiSvc); ok {
+				if dxva2Err != nil {
+					// Avoid hammering I2C when WMI is available.
+					dxva2DisabledUntil = now.Add(30 * time.Second)
+				}
+				emit(MetricBrightnessPercent, fmt.Sprintf("%d", percent))
+				return
+			} else if err != nil {
+				wmiErr = err
+			}
+		}
+
+		// 3) If DXVA2 was skipped due to backoff, try it as a last resort.
+		if now.Before(dxva2DisabledUntil) {
+			if percent, ok, err := readPrimaryMonitorBrightnessPercentDXVA2(); ok {
+				emit(MetricBrightnessPercent, fmt.Sprintf("%d", percent))
+				return
+			} else if err != nil && dxva2Err == nil {
+				dxva2Err = err
+			}
+		}
+
+		if dxva2Err != nil || wmiErr != nil {
+			errText := ""
+			if wmiErr != nil {
+				errText = "wmi: " + wmiErr.Error()
+			}
+			if dxva2Err != nil {
+				if errText != "" {
+					errText += "; "
+				}
+				errText += "dxva2: " + dxva2Err.Error()
+			}
+			if errText != "" && (errText != lastErrText || time.Since(lastErrAt) >= brightnessErrLogMinInterval) {
 				lastErrText = errText
-				lastErrAt = time.Now()
+				lastErrAt = now
 				if log != nil {
 					log.Warn("read brightness failed", "err", errText)
 				}
 			}
 		}
-		if !ok {
-			emit(MetricBrightnessPercent, "-1")
-			return
-		}
-		emit(MetricBrightnessPercent, fmt.Sprintf("%d", percent))
+
+		emit(MetricBrightnessPercent, "-1")
 	}
 
 	push()
@@ -182,7 +263,7 @@ func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 
 const monitorDefaultToPrimary = 1
 
-func readPrimaryMonitorBrightnessPercent() (percent int, ok bool, _ error) {
+func readPrimaryMonitorBrightnessPercentDXVA2() (percent int, ok bool, _ error) {
 	hwnd, _, err := procGetDesktopWindow.Call()
 	if hwnd == 0 {
 		if err != nil && !errors.Is(err, syscall.Errno(0)) {
@@ -266,6 +347,151 @@ func readPrimaryMonitorBrightnessPercent() (percent int, ok bool, _ error) {
 		percent = 100
 	}
 	return percent, true, nil
+}
+
+var errWMIFound = errors.New("wmi: found")
+
+func connectWMIRootWMI() (*ole.IDispatch, error) {
+	unknown, err := oleutil.CreateObject("WbemScripting.SWbemLocator")
+	if err != nil {
+		return nil, err
+	}
+	defer unknown.Release()
+
+	locator, err := unknown.QueryInterface(ole.IID_IDispatch)
+	if err != nil {
+		return nil, err
+	}
+	defer locator.Release()
+
+	// ConnectServer optional args: (server, namespace, ...)
+	svcVar, err := oleutil.CallMethod(locator, "ConnectServer", nil, "root\\wmi")
+	if err != nil {
+		svcVar, err = oleutil.CallMethod(locator, "ConnectServer", ".", "root\\wmi")
+		if err != nil {
+			return nil, err
+		}
+	}
+	if svcVar == nil {
+		return nil, errors.New("wmi service is nil")
+	}
+	svc := svcVar.ToIDispatch()
+	if svc == nil {
+		_ = svcVar.Clear()
+		return nil, errors.New("wmi service is nil")
+	}
+	// `ToIDispatch` does not AddRef. Keep the service alive after clearing the VARIANT.
+	svc.AddRef()
+	_ = svcVar.Clear()
+
+	// Best-effort: set impersonation level to impersonate (3).
+	secVar, err := oleutil.GetProperty(svc, "Security_")
+	if secVar != nil {
+		if err == nil {
+			sec := secVar.ToIDispatch()
+			if sec != nil {
+				_, _ = oleutil.PutProperty(sec, "ImpersonationLevel", 3)
+			}
+		}
+		_ = secVar.Clear()
+	}
+	return svc, nil
+}
+
+func readBrightnessPercentWMI(svc *ole.IDispatch) (percent int, ok bool, _ error) {
+	if svc == nil {
+		return 0, false, nil
+	}
+	query := "SELECT CurrentBrightness FROM WmiMonitorBrightness WHERE Active=TRUE"
+	setVar, err := oleutil.CallMethod(svc, "ExecQuery", query)
+	if err != nil {
+		return 0, false, err
+	}
+	if setVar == nil {
+		return 0, false, errors.New("wmi query result is nil")
+	}
+	defer func() { _ = setVar.Clear() }()
+	set := setVar.ToIDispatch()
+	if set == nil {
+		return 0, false, errors.New("wmi query result is nil")
+	}
+
+	found := false
+	var out int
+	err = oleutil.ForEach(set, func(v *ole.VARIANT) error {
+		defer func() { _ = v.Clear() }()
+		item := v.ToIDispatch()
+		if item == nil {
+			return nil
+		}
+
+		curVar, err := oleutil.GetProperty(item, "CurrentBrightness")
+		if err != nil {
+			if curVar != nil {
+				_ = curVar.Clear()
+			}
+			return err
+		}
+		if curVar == nil {
+			return nil
+		}
+		val := curVar.Value()
+		_ = curVar.Clear()
+
+		n, ok := variantNumberToInt(val)
+		if !ok {
+			return nil
+		}
+		if n < 0 {
+			n = 0
+		}
+		if n > 100 {
+			n = 100
+		}
+		out = n
+		found = true
+		return errWMIFound
+	})
+	if err != nil && !errors.Is(err, errWMIFound) {
+		return 0, false, err
+	}
+	if !found {
+		return 0, false, nil
+	}
+	return out, true, nil
+}
+
+func variantNumberToInt(v interface{}) (int, bool) {
+	switch n := v.(type) {
+	case int8:
+		return int(n), true
+	case uint8:
+		return int(n), true
+	case int16:
+		return int(n), true
+	case uint16:
+		return int(n), true
+	case int32:
+		return int(n), true
+	case uint32:
+		return int(n), true
+	case int64:
+		return int(n), true
+	case uint64:
+		if n > uint64(^uint(0)) {
+			return 0, false
+		}
+		return int(n), true
+	case int:
+		return n, true
+	case uint:
+		if n > uint(^uint(0)>>1) {
+			return 0, false
+		}
+		return int(n), true
+	default:
+		return 0, false
+	}
 }
 
 func readBatteryPercent() (percent int, hasBattery bool, _ error) {

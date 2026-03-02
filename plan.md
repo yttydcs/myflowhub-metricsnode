@@ -1,10 +1,10 @@
-# Plan - MyFlowHub-MetricsNode（亮度下行控制）
+# Plan - MyFlowHub-MetricsNode（Windows 内屏亮度：WMI 读写兜底）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-brightness-control`  
-> 分支：`feat/metricsnode-brightness-control`  
+> Worktree：`d:\project\MyFlowHub3\worktrees\fix-metricsnode-win-brightness-wmi`  
+> 分支：`fix/metricsnode-win-brightness-wmi`  
 > 日期：2026-03-02  
 >
-> 本 workflow 目标：在既有 VarStore 子协议与 bindings 机制上，补齐 **亮度变量的“下行写入→执行”**（Windows + Android）。
+> 本 workflow 目标：修复 Windows 笔记本内屏在当前实现下亮度读取失败（`brightness_percent=-1`）的问题，并让“写入亮度变量→执行”在内屏场景可用。
 
 ---
 
@@ -12,74 +12,89 @@
 
 ### 1.1 目标
 
-- 当其它节点对 MetricsNode 的亮度变量执行 `set(owner=<MetricsNodeNodeID>, name=<绑定的var>)` 后：
-  - **Windows**：同步调整“主显示器”亮度；
-  - **Android**：同步调整系统亮度（`Settings.System.SCREEN_BRIGHTNESS`）。
-- 仍遵循既有映射：`metric (brightness_percent)` ↔ `bindings_json.var_name`（默认 `sys_brightness_percent`，但允许用户自定义）。
+- Windows（笔记本内屏）：
+  - 亮度采集：不再长期上报 `brightness_percent=-1`；
+  - 亮度下行控制：写入亮度变量（默认 `sys_brightness_percent`）后，能实际调整系统亮度（best-effort）。
+- 外接显示器等场景不回退已有能力：仍优先使用现有的 DXVA2/Monitor API（DDC/CI）。
 
-### 1.2 范围
+### 1.2 背景/现状
+
+当前 Windows 亮度采集使用 `dxva2.dll` 的物理监视器/亮度 API（DDC/CI）。在用户的 **Windows 笔记本内屏** 场景中，日志显示：
+
+- `read brightness failed err="physical monitor handle is 0"`
+- `read brightness failed err="An error occurred while transmitting data to the device on the I2C bus."`
+
+导致 MetricsNode 输出 `brightness_percent=-1`（不可读哨兵值）。
+
+### 1.3 范围
 
 - 必须：
-  - Go（core）：VarStore `notify_set` 下行路由新增 `brightness_percent` → 控制动作队列；
-  - Windows：消费控制动作并执行亮度设置；
-  - Android：消费控制动作并执行亮度设置；补齐所需权限声明；
-  - 回归：Go 单测/编译通过；Android `assembleDebug` 通过。
+  - Windows：为亮度 **读取/写入** 增加 WMI 兜底（`ROOT\\WMI`：`WmiMonitorBrightness` / `WmiMonitorBrightnessMethods`）。
+  - 仍保持“优先 DXVA2，失败后 WMI 兜底”的策略。
+  - 避免因 DXVA2 在内屏持续失败导致的高频 warn 日志（WMI 成功时不应再输出 DXVA2 的失败日志）。
 - 可选：
-  - Android：若缺少“修改系统设置”授权（`canWrite=false`）时的 UI 引导（本轮默认仅 best-effort 执行 + 不崩溃）。
+  - 在亮度采集侧对 DXVA2 失败做短期退避（避免每 2s 触发 I2C 失败）。
 - 不做：
-  - 不新增/修改 `metrics.bindings_json` schema（不加字段）。
-  - 不做市场/插件系统等更大范围扩展。
+  - 不改变 metric/var 名称与 bindings schema（仍是 `brightness_percent` ↔ bindings 的 `var_name`）。
+  - 不引入 UI 引导（例如提示用户开启 DDC/CI 或系统授权），本轮先让内屏可用与可观测。
 
-### 1.3 使用场景
+### 1.4 使用场景
 
-- 用户在 `MyFlowHub-Win` 的 VarPool 中将 `sys_brightness_percent` 写入 `30`：
-  - Win 机亮度变为约 30%；
-  - Android 机亮度变为约 30%（已授权前提下）。
+1) 用户手动调节 Windows 系统亮度 → MetricsNode 采集到变化并上报到 VarStore（默认 `sys_brightness_percent`）。
+2) 其它节点写入 `sys_brightness_percent=30`（owner 指向 MetricsNode）→ MetricsNode 在本机执行亮度调整；随后采集会把 VarStore 纠偏到真实值（例如 clamp 后的 `100`）。
 
-### 1.4 功能需求
+### 1.5 功能需求
 
-- 下行入口：继续使用 VarStore 子协议 `notify_set`（owner 下行通知）。
-- 值解析：
-  - 支持整数文本（如 `0`、`50`、`100`、`200`）；非数字视为无效并忽略；
-  - clamp 到 `0~100` 后执行（与音量控制行为一致）。
-- 失败处理：
-  - Windows/Android 执行失败不影响其它指标上报；
-  - 失败仅记录日志/吞掉异常（Android 侧），后续由采集上报纠偏为“真实值”。
+- 亮度读取（Windows）：
+  - 优先：DXVA2（现有实现：主显示器）；
+  - 兜底：WMI（内屏常用）。
+- 亮度写入（Windows）：
+  - 优先：DXVA2（外接显示器常用）；
+  - 兜底：WMI（内屏常用）。
+- 值域与语义：
+  - `brightness_percent`：字符串整数 `0~100`；不可读时 `-1`。
+  - 写入时：整数解析失败则忽略；解析成功 clamp 到 `0~100` 后执行。
 
-### 1.5 非功能需求
+### 1.6 非功能需求
 
-- 性能：动作队列保持“同一 metric 仅保留最新值”，避免频繁写入造成抖动。
-- 稳定性：不可用平台能力（外接显示器不支持、Android 未授权等）应 graceful degrade。
-- 安全：只接受与本节点 owner 匹配的下行写入（沿用现有校验逻辑）。
+- 稳定性：
+  - WMI 查询失败不影响其它 metric 上报/控制；
+  - COM 初始化严格按线程模型执行（避免二次初始化导致错误）。
+- 性能：
+  - WMI 属于相对重的调用：建议在 DXVA2 明显失败后进行退避或优先走 WMI（避免每 2s 触发 I2C 失败）。
 
-### 1.6 输入输出
+### 1.7 输入输出
 
-- 输入：VarStore `notify_set`（`name` 为 bindings 的 `var_name`，`value` 为期望亮度百分比）。
+- 输入：
+  - Windows 系统亮度（DXVA2 或 WMI）。
+  - VarStore 下行 `notify_set`（亮度变量写入）。
 - 输出：
-  - Windows：调用 Monitor brightness API 设置；
-  - Android：写入 `Settings.System.SCREEN_BRIGHTNESS`。
+  - 上报：`brightness_percent` → bindings → VarStore `set`（默认 `sys_brightness_percent`）。
+  - 控制：执行 DXVA2 / WMI 的亮度设置。
 
-### 1.7 边界异常
+### 1.8 边界异常
 
-- Windows：主显示器不支持亮度设置（API 调用失败）→ 记录告警，不崩溃。
-- Android：未授予“修改系统设置”权限或 ROM 限制 → best-effort，失败不崩溃。
+- 设备/驱动不支持：
+  - DXVA2 不可用（内屏/I2C）→ WMI 兜底；
+  - WMI 不可用/返回空 → 最终上报 `-1`，并按节流输出 warn。
+- 多显示器：
+  - DXVA2 负责“主显示器”；
+  - WMI 通常只覆盖内屏，作为兜底使用（不替代 DXVA2 正常工作时的主显示器语义）。
 
-### 1.8 验收标准
+### 1.9 验收标准
 
-- 在 MetricsNode 已登录且 Reporting 开启时：
-  - 写入 `sys_brightness_percent=30` → 对应设备亮度发生变化；
-  - 写入 `sys_brightness_percent=200` → 实际亮度按 100 执行（clamp），随后 VarStore 值也会被采集上报纠偏为 `100`；
-  - 写入非法值（如 `abc`）→ 不执行，不崩溃。
+- Windows 笔记本内屏：
+  - MetricsNode 的 `brightness_percent` 不再长期为 `-1`；
+  - 手动调节系统亮度时，`sys_brightness_percent` 跟随变化；
+  - 写入 `sys_brightness_percent=30`（owner=<MetricsNodeNodeID>）后，系统亮度发生变化。
 - 回归命令通过：
-  - Go（根模块）：`GOWORK=off go test ./... -count=1 -p 1`
-  - Go（Windows 模块）：`cd windows/frontend; npm ci; npm run build` 后 `cd ..; GOWORK=off go test ./... -count=1 -p 1`
-  - Go（nodemobile）：`cd nodemobile; GOWORK=off go test ./... -count=1 -p 1`
-  - Android：`cd android; ./gradlew :app:assembleDebug`
+  - Go：`GOWORK=off go test ./... -count=1 -p 1`
+  - Windows module：`cd windows/frontend; npm ci; npm run build` 后 `cd ..; GOWORK=off go test ./... -count=1 -p 1`
 
-### 1.9 风险
+### 1.10 风险
 
-- Android `WRITE_SETTINGS` 属于特殊授权：未引导情况下可能执行失败（本轮先保证链路完整与不崩溃）。
-- Windows 亮度 API 设备差异较大：按 best-effort + 日志可观测处理。
+- WMI 依赖 COM（线程初始化与对象释放必须正确，否则易泄漏或偶发失败）。
+- WMI 能力与 DXVA2 覆盖范围不同：WMI 主要用于内屏兜底；需要避免“WMI 成功就永远不再尝试 DXVA2”的死锁策略，防止外接显示器切换主屏时误读内屏亮度。
 
 ---
 
@@ -87,54 +102,52 @@
 
 ### 2.1 总体方案
 
-沿用已存在的“变量既是状态也是命令”机制：
+在 Windows 亮度读写路径上引入“双通道”：
 
-1) 其它节点写入 VarStore（owner 指向 MetricsNode 的 NodeID）  
-2) MetricsNode 在 `notify_set` 中识别亮度变量（通过 bindings 反查 metric）  
-3) 入队控制动作（`brightness_percent`）  
-4) 平台侧消费动作并执行：  
-   - Windows：Go 控制 worker 直接调用 WinAPI 设置亮度  
-   - Android：`NodeService` 轮询 actions 并写系统亮度设置
+- DXVA2（现有）：主显示器 DDC/CI（外接显示器常用）
+- WMI（新增兜底）：`ROOT\\WMI`：
+  - 读：`WmiMonitorBrightness.CurrentBrightness`
+  - 写：`WmiMonitorBrightnessMethods.WmiSetBrightness(Timeout,Brightness)`
+
+并约定：
+
+- **优先 DXVA2**；仅在 DXVA2 明显失败（handle=0 / I2C 错误 / 无监视器等）时使用 WMI。
+- 在采集 loop 内对 DXVA2 失败做退避，避免持续触发 I2C 错误（例如禁用 DXVA2 30s 后再试一次）。
 
 ### 2.2 模块职责
 
-- `core/runtime/varstore_inbound.go`：下行通知解析 + 值校验/clamp + 入队控制动作
-- `core/runtime/control_worker_windows.go`：Windows 侧消费动作并执行
-- `core/actuator/*`：封装 Windows 亮度执行细节（避免 runtime 直接堆 WinAPI 调用）
-- `android/.../NodeService.kt`：Android 侧消费动作并执行（Settings 写入）
-- `android/.../AndroidManifest.xml`：声明所需权限
+- `core/metrics/collectors_windows.go`：
+  - 亮度采集逻辑：DXVA2 + WMI 兜底 + 退避；
+  - COM 初始化：亮度 loop 使用 `LockOSThread + CoInitialize/CoUninitialize`，保证 WMI 调用稳定。
+- `core/actuator/brightness_windows.go`：
+  - 亮度设置逻辑：DXVA2 + WMI 兜底（控制 worker 已初始化 COM，可直接调用 WMI）。
 
-### 2.3 数据/调用流（简图）
+### 2.3 数据/调用流
 
-`VarStore notify_set` → `Runtime.handleVarStoreNotifySet` → `controlQ.Enqueue("brightness_percent","N")` →  
-Windows：`controlWorker` → `actuator.SetPrimaryMonitorBrightnessPercent(N)`  
-Android：`NodeService.dequeueActions()` → `applyControlActions()` → `Settings.System.putInt(..., raw)`
+- 采集：
+  - `brightnessLoop` → DXVA2 读失败 → WMI 读成功 → `emit(brightness_percent,"N")`
+- 控制：
+  - `notify_set` → 入队 `brightness_percent` → `controlWorker` → DXVA2 写失败 → WMI 写成功
 
-### 2.4 接口草案（不改协议）
+### 2.4 错误与安全
 
-- 继续使用：
-  - VarStore：`notify_set`
-  - 控制动作：`ControlAction{metric,value}`（JSON）
-  - Android：`nodemobile.DequeueActions()`（已存在）
+- WMI 查询/调用失败：返回 error，最终由上层节流记录 warn；不 panic，不阻塞其它指标。
+- COM 线程模型：
+  - 不能在同一线程二次 `CoInitialize`（go-ole 对 `S_FALSE` 也会当 error），因此必须保证“每个执行 WMI 的 goroutine 只初始化一次”。
 
-### 2.5 错误与安全
+### 2.5 性能与测试策略
 
-- 只处理 owner 匹配的下行写入（沿用现有逻辑）。
-- 执行失败：Windows 记录 warn；Android runCatching 吞掉异常；由采集上报纠偏 VarStore 值。
+- 性能：
+  - DXVA2 失败退避（减少 I2C 错误与无效调用）。
+  - WMI 查询每 2s 轮询可接受；若后续发现耗电/卡顿，再考虑事件驱动或更长间隔。
+- 测试：
+  - Go 编译/单测覆盖（主要验证不引入编译问题）。
+  - 手工：在内屏机器上观察 `brightness_percent` 与写入执行。
 
-### 2.6 性能与测试策略
+### 2.6 可扩展性设计点
 
-- 性能关键点：
-  - actionQueue 按 metric 覆盖，避免重复写入；
-  - Android 控制轮询仅在 actions 非空时才执行写入。
-- 测试策略：
-  - Go：补充 `varstore_inbound` 对 `brightness_percent` 的路由单测（验证 clamp + 入队）。
-  - Android：`assembleDebug` 确保编译与权限声明正确。
-
-### 2.7 可扩展性设计点
-
-- 后续新增更多“可控”指标（如亮度/网络开关等）时：
-  - 只需在 `handleVarStoreNotifySet` 增加 metric 分支，并在平台侧实现执行即可。
+- 未来若需更精确地绑定“主显示器”到 WMI instance，可扩展为：
+  - DXVA2 获取主显示器设备路径/ID → 映射到 WMI 的 `InstanceName`（本轮不做）。
 
 ---
 
@@ -142,68 +155,35 @@ Android：`NodeService.dequeueActions()` → `applyControlActions()` → `Settin
 
 ### T0 - 基线确认
 
-- 目标：worktree/分支正确，且工作区干净。
-- 验收：
-  - `git status --porcelain` 为空。
-- 回滚点：
-  - 删除 worktree + 删除分支即可回滚（未改 main）。
+- 目标：worktree/分支正确，工作区干净。
+- 验收：`git status --porcelain` 为空。
 
-### T1 - Go core：新增 brightness 下行路由
+### T1 - Windows：亮度读取增加 WMI 兜底 + DXVA2 退避
 
-- 目标：`sys_brightness_percent`（或用户自定义绑定）被写入时，入队 `brightness_percent` 控制动作。
+- 目标：DXVA2 失败时，能用 WMI 读出内屏亮度并上报 `0~100`。
 - 涉及文件：
-  - `core/runtime/varstore_inbound.go`
-  - `core/runtime/varstore_inbound_test.go`（新增用例）
+  - `core/metrics/collectors_windows.go`
 - 验收：
-  - `value=200` 入队为 `100`；
-  - `value=abc` 不入队；
-  - owner 不匹配不处理。
-- 测试点：
-  - `GOWORK=off go test ./... -count=1 -p 1`
-- 回滚点：
-  - 回滚上述文件修改即可。
+  - 内屏不再持续 `brightness_percent=-1`；
+  - 日志不再每 2s warn（WMI 成功时不应 warn）。
 
-### T2 - Windows：执行亮度控制
+### T2 - Windows：亮度写入增加 WMI 兜底
 
-- 目标：Windows 控制 worker 能执行 `brightness_percent` 动作并设置主显示器亮度。
+- 目标：写入亮度变量时，DXVA2 失败可回退到 WMI 执行。
 - 涉及文件：
-  - `core/runtime/control_worker_windows.go`
-  - `core/actuator/brightness_windows.go`（新增）
+  - `core/actuator/brightness_windows.go`
 - 验收：
-  - 动作入队后，系统亮度发生变化；
-  - 执行失败仅 warn，不影响其它动作与上报。
-- 测试点：
-  - `GOWORK=off go test ./... -count=1 -p 1`（包含 windows build）
-- 回滚点：
-  - 回滚控制分支与 actuator 文件。
+  - 内屏写入 `sys_brightness_percent=30` 能改变系统亮度。
 
-### T3 - Android：执行亮度控制
+### T3 - 回归验证
 
-- 目标：Android `NodeService` 能消费 `brightness_percent` 动作并写入系统亮度。
-- 涉及文件：
-  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
-  - `android/app/src/main/AndroidManifest.xml`
-- 验收：
-  - 写入后系统亮度变化（已授权前提）；未授权时不崩溃。
-- 测试点：
-  - `cd android; ./gradlew :app:assembleDebug`
-- 回滚点：
-  - 回滚 Kotlin 与 manifest 修改。
+- Go：`GOWORK=off go test ./... -count=1 -p 1`
+- Windows module：
+  - `cd windows/frontend; npm ci; npm run build`
+  - `cd ..; GOWORK=off go test ./... -count=1 -p 1`
 
-### T4 - 回归验证（端到端）
+### T4 - Code Review（阶段 3.3）+ 归档（阶段 4）
 
-- 目标：Win 端通过 VarPool 写入亮度变量，Windows/Android 执行生效。
-- 步骤：
-  - 启动：`pwsh -File d:\\project\\MyFlowHub3\\scripts\\run-dev.ps1 -WaitServer`
-  - 在 `MyFlowHub-Win` 写入 `sys_brightness_percent=30/200`
-  - 观察本机亮度变化 + VarStore 值纠偏（clamp）。
-- 回滚点：
-  - 回滚分支提交即可。
-
-### T5 - Code Review（阶段 3.3）+ 归档（阶段 4）
-
-- Code Review 清单：
-  - 需求覆盖、架构合理性、性能风险、稳定性与安全、测试覆盖
 - 归档输出：
-  - `docs/change/YYYY-MM-DD_metricsnode-brightness-control.md`
+  - `docs/change/2026-03-02_metricsnode-win-brightness-wmi.md`
 
