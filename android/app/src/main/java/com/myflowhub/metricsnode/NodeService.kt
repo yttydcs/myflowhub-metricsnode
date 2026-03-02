@@ -242,10 +242,12 @@ class NodeService : Service() {
     private fun applyControlActions(audio: AudioManager, actions: List<NodeAction>) {
         var volumePercent: NodeAction? = null
         var muted: NodeAction? = null
+        var brightnessPercent: NodeAction? = null
         for (a in actions) {
             when (a.metric) {
                 "volume_percent" -> volumePercent = a
                 "volume_muted" -> muted = a
+                "brightness_percent" -> brightnessPercent = a
             }
         }
 
@@ -265,6 +267,16 @@ class NodeService : Service() {
             val wantMuted = v == "1" || v == "true" || v == "yes" || v == "y" || v == "on"
             val direction = if (wantMuted) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE
             runCatching { audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, 0) }
+        }
+        brightnessPercent?.let { act ->
+            val percent = act.value.toIntOrNull()?.coerceIn(0, 100) ?: return@let
+            if (!Settings.System.canWrite(this)) {
+                return@let
+            }
+            val raw = ((percent * 255) + 50) / 100
+            runCatching {
+                Settings.System.putInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, raw.coerceIn(0, 255))
+            }
         }
     }
 

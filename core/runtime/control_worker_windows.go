@@ -57,12 +57,10 @@ func (r *Runtime) controlWorker(ctx context.Context) {
 		if len(actions) == 0 {
 			continue
 		}
-		if !ensureEndpoint() {
-			continue
-		}
 
 		volPercentValue, haveVolPercent := "", false
 		mutedValue, haveMuted := "", false
+		brightnessValue, haveBrightness := "", false
 		for _, a := range actions {
 			switch a.Metric {
 			case metrics.MetricVolumePercent:
@@ -71,11 +69,21 @@ func (r *Runtime) controlWorker(ctx context.Context) {
 			case metrics.MetricVolumeMuted:
 				mutedValue = a.Value
 				haveMuted = true
+			case metrics.MetricBrightnessPercent:
+				brightnessValue = a.Value
+				haveBrightness = true
 			default:
 				// ignore unknown actions
 			}
 		}
-		if haveVolPercent {
+
+		volumeReady := true
+		if haveVolPercent || haveMuted {
+			if !ensureEndpoint() {
+				volumeReady = false
+			}
+		}
+		if haveVolPercent && volumeReady {
 			percent, ok := parseInt(volPercentValue)
 			if ok {
 				percent = clampInt(percent, 0, 100)
@@ -88,7 +96,7 @@ func (r *Runtime) controlWorker(ctx context.Context) {
 				}
 			}
 		}
-		if haveMuted {
+		if haveMuted && volumeReady {
 			m, ok := parseBoolish(mutedValue)
 			if ok {
 				if err := endpoint.SetMuted(m); err != nil {
@@ -97,6 +105,17 @@ func (r *Runtime) controlWorker(ctx context.Context) {
 					}
 					endpoint.Release()
 					endpoint = nil
+				}
+			}
+		}
+		if haveBrightness {
+			percent, ok := parseInt(brightnessValue)
+			if ok {
+				percent = clampInt(percent, 0, 100)
+				if err := actuator.SetPrimaryMonitorBrightnessPercent(percent); err != nil {
+					if r.log != nil {
+						r.log.Warn("set brightness failed", "percent", percent, "err", err.Error())
+					}
 				}
 			}
 		}

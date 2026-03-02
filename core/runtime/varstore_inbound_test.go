@@ -1,6 +1,13 @@
 package runtime
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/yttydcs/myflowhub-core/header"
+	protovar "github.com/yttydcs/myflowhub-proto/protocol/varstore"
+
+	"github.com/yttydcs/myflowhub-metricsnode/core/metrics"
+)
 
 func TestParseInt(t *testing.T) {
 	n, ok := parseInt(" 10 ")
@@ -14,9 +21,9 @@ func TestParseInt(t *testing.T) {
 
 func TestParseBoolish(t *testing.T) {
 	cases := []struct {
-		in      string
-		want    bool
-		wantOK  bool
+		in     string
+		want   bool
+		wantOK bool
 	}{
 		{"1", true, true},
 		{"true", true, true},
@@ -64,3 +71,66 @@ func TestMetricByVarName(t *testing.T) {
 	}
 }
 
+func TestHandleVarStoreNotifySet_BrightnessPercentClampAndEnqueue(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings: []Binding{{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"}},
+	}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_brightness_percent",
+		Value:      "200",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	actions := r.DequeueActions()
+	if len(actions) != 1 {
+		t.Fatalf("expected 1 action, got %d", len(actions))
+	}
+	if actions[0].Metric != metrics.MetricBrightnessPercent || actions[0].Value != "100" {
+		t.Fatalf("expected brightness_percent=100, got (%q,%q)", actions[0].Metric, actions[0].Value)
+	}
+}
+
+func TestHandleVarStoreNotifySet_BrightnessPercentInvalidIgnored(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings: []Binding{{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"}},
+	}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_brightness_percent",
+		Value:      "abc",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	if actions := r.DequeueActions(); len(actions) != 0 {
+		t.Fatalf("expected 0 actions, got %d", len(actions))
+	}
+}
+
+func TestHandleVarStoreNotifySet_BrightnessPercentOwnerMismatchIgnored(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		Bindings: []Binding{{Metric: metrics.MetricBrightnessPercent, VarName: "sys_brightness_percent"}},
+	}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_brightness_percent",
+		Value:      "50",
+		Owner:      8,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	if actions := r.DequeueActions(); len(actions) != 0 {
+		t.Fatalf("expected 0 actions, got %d", len(actions))
+	}
+}

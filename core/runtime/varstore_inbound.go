@@ -109,6 +109,16 @@ func (r *Runtime) handleVarStoreNotifySet(hdr core.IHeader, resp protovar.VarRes
 		} else {
 			r.enqueueControlAction(metric, "0")
 		}
+	case metrics.MetricBrightnessPercent:
+		percent, ok := parseInt(value)
+		if !ok {
+			if r.log != nil {
+				r.log.Warn("brightness_percent command invalid", "var", name, "value", value)
+			}
+			return
+		}
+		percent = clampInt(percent, 0, 100)
+		r.enqueueControlAction(metric, strconv.Itoa(percent))
 	case metrics.MetricBatteryPercent:
 		correct, ok := r.currentPublishedMetricValue(metrics.MetricBatteryPercent, cfg)
 		if !ok || correct == "" {
@@ -214,4 +224,3 @@ func clampInt(n, min, max int) int {
 	}
 	return n
 }
-

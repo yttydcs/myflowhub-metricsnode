@@ -1,12 +1,10 @@
-# Plan - MyFlowHub-MetricsNode（新增屏幕亮度 + Device ID 默认生成）
+# Plan - MyFlowHub-MetricsNode（亮度下行控制）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-brightness-deviceid`
-> 分支：`feat/metricsnode-brightness-deviceid`
-> 日期：2026-03-02
+> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-brightness-control`  
+> 分支：`feat/metricsnode-brightness-control`  
+> 日期：2026-03-02  
 >
-> 本 workflow 目标：
-> 1) Windows + Android：新增屏幕亮度采集并上报到 VarStore（走既有 `metrics.bindings_json` 绑定体系）。
-> 2) Windows + Android：当本地未持久化/为空时，自动生成稳定的默认 Device ID 并落盘（避免忘填导致 Auth 不可用）。
+> 本 workflow 目标：在既有 VarStore 子协议与 bindings 机制上，补齐 **亮度变量的“下行写入→执行”**（Windows + Android）。
 
 ---
 
@@ -14,71 +12,64 @@
 
 ### 1.1 目标
 
-- 新增 metric：`brightness_percent`（字符串，取值 `0~100`；不可读时上报 `-1`）。
-- 默认 bindings 增加：`brightness_percent` → `sys_brightness_percent`。
-- Windows：采集“主显示器”亮度（轮询 `2s`）。
-- Android：采集系统亮度（轮询 `1s`）。
-- Device ID 默认生成：
-  - Windows：若 `windows/config/bootstrap.json` 中 `auth.device_id` 为空/不存在，自动生成并写回。
-  - Android：若 SharedPreferences `device_id` 为空/不存在，自动生成并写回；Service 也需兜底生成（避免无 UI 启动失败）。
+- 当其它节点对 MetricsNode 的亮度变量执行 `set(owner=<MetricsNodeNodeID>, name=<绑定的var>)` 后：
+  - **Windows**：同步调整“主显示器”亮度；
+  - **Android**：同步调整系统亮度（`Settings.System.SCREEN_BRIGHTNESS`）。
+- 仍遵循既有映射：`metric (brightness_percent)` ↔ `bindings_json.var_name`（默认 `sys_brightness_percent`，但允许用户自定义）。
 
 ### 1.2 范围
 
 - 必须：
-  - Go（core）：新增亮度 metric 常量；运行时配置支持该 metric；默认 bindings 含亮度；对“旧默认 bindings”做安全迁移（仅当 bindings **完全等于旧默认** 时才自动升级）。
-  - Windows：亮度采集 + Device ID 默认生成。
-  - Android：亮度采集（Kotlin 侧）+ Device ID 默认生成（Activity + Service 兜底）+ GoMobile API 扩展（新增 `UpdateBrightnessPercent`，并以“可选反射”方式兼容旧 AAR）。
+  - Go（core）：VarStore `notify_set` 下行路由新增 `brightness_percent` → 控制动作队列；
+  - Windows：消费控制动作并执行亮度设置；
+  - Android：消费控制动作并执行亮度设置；补齐所需权限声明；
+  - 回归：Go 单测/编译通过；Android `assembleDebug` 通过。
 - 可选：
-  - UI：当 Device ID 为空时禁用 Register/Login（理论上默认生成后不会触发，但可作为防御）。
+  - Android：若缺少“修改系统设置”授权（`canWrite=false`）时的 UI 引导（本轮默认仅 best-effort 执行 + 不崩溃）。
 - 不做：
-  - 不实现“修改亮度变量 → 调整系统亮度”的反向控制（本轮仅采集上报）。
-  - 不变更 `metrics.bindings_json` schema（不新增字段），继续用现有 Binding 机制扩展。
+  - 不新增/修改 `metrics.bindings_json` schema（不加字段）。
+  - 不做市场/插件系统等更大范围扩展。
 
 ### 1.3 使用场景
 
-- 用户启动 MetricsNode（Windows/Android）后无需手填 Device ID 即可完成 Register/Login 并开始上报 metrics。
-- 用户在系统里调节亮度后，MetricsNode 能把最新亮度同步到 VarStore 变量（默认 `sys_brightness_percent`）。
+- 用户在 `MyFlowHub-Win` 的 VarPool 中将 `sys_brightness_percent` 写入 `30`：
+  - Win 机亮度变为约 30%；
+  - Android 机亮度变为约 30%（已授权前提下）。
 
 ### 1.4 功能需求
 
-- 亮度采集：
-  - Windows：读取主显示器当前亮度百分比；失败则上报 `-1`。
-  - Android：读取系统亮度（0-255）并换算为百分比；失败则上报 `-1`。
-  - 去抖：亮度值不变时不重复上报（Android 侧）；Runtime 侧继续使用既有差量发布去重。
-- Device ID 默认生成：
-  - 仅在本地未持久化/为空时生成一次；生成后持久化，后续保持稳定。
-  - 生成值应为随机串（不包含主机名等可能敏感信息）。
+- 下行入口：继续使用 VarStore 子协议 `notify_set`（owner 下行通知）。
+- 值解析：
+  - 支持整数文本（如 `0`、`50`、`100`、`200`）；非数字视为无效并忽略；
+  - clamp 到 `0~100` 后执行（与音量控制行为一致）。
+- 失败处理：
+  - Windows/Android 执行失败不影响其它指标上报；
+  - 失败仅记录日志/吞掉异常（Android 侧），后续由采集上报纠偏为“真实值”。
 
 ### 1.5 非功能需求
 
-- 性能：
-  - Windows 亮度轮询 `2s`（避免高频 WinAPI 调用）。
-  - Android 亮度轮询 `1s`，并做“变化才上报”。
-- 稳定性：
-  - 亮度读取失败不应影响其它指标采集/上报。
-  - Android 若仍使用旧 gomobile AAR，不应因缺少亮度导出方法导致 GoBridge 初始化失败。
+- 性能：动作队列保持“同一 metric 仅保留最新值”，避免频繁写入造成抖动。
+- 稳定性：不可用平台能力（外接显示器不支持、Android 未授权等）应 graceful degrade。
+- 安全：只接受与本节点 owner 匹配的下行写入（沿用现有校验逻辑）。
 
 ### 1.6 输入输出
 
-- 输入：系统亮度（Windows API / Android Settings）。
-- 输出：`brightness_percent` metric → bindings → VarStore `set`（默认 var：`sys_brightness_percent`）。
+- 输入：VarStore `notify_set`（`name` 为 bindings 的 `var_name`，`value` 为期望亮度百分比）。
+- 输出：
+  - Windows：调用 Monitor brightness API 设置；
+  - Android：写入 `Settings.System.SCREEN_BRIGHTNESS`。
 
 ### 1.7 边界异常
 
-- Windows 外接显示器/驱动不支持亮度读取：持续上报 `-1`。
-- Android ROM/权限限制导致读取失败：上报 `-1`。
-- 读到的值超范围：clamp 到 `0~100`；仅 `-1` 作为不可读哨兵值保留。
+- Windows：主显示器不支持亮度设置（API 调用失败）→ 记录告警，不崩溃。
+- Android：未授予“修改系统设置”权限或 ROM 限制 → best-effort，失败不崩溃。
 
 ### 1.8 验收标准
 
-- Windows：
-  - 亮度变化后，MetricsNode UI 的 `Metrics` 中 `brightness_percent` 会变化；
-  - VarStore 中默认变量 `sys_brightness_percent` 同步变化。
-- Android：
-  - 亮度变化后，上报 `brightness_percent` 并同步到 VarStore（默认 `sys_brightness_percent`）。
-- Device ID：
-  - Windows：首次启动未配置时自动生成并在 UI 中可见；不手填也可完成 Register/Login。
-  - Android：首次启动未配置时自动生成并在 UI 中可见；Service 启动不会因空 device_id 失败。
+- 在 MetricsNode 已登录且 Reporting 开启时：
+  - 写入 `sys_brightness_percent=30` → 对应设备亮度发生变化；
+  - 写入 `sys_brightness_percent=200` → 实际亮度按 100 执行（clamp），随后 VarStore 值也会被采集上报纠偏为 `100`；
+  - 写入非法值（如 `abc`）→ 不执行，不崩溃。
 - 回归命令通过：
   - Go（根模块）：`GOWORK=off go test ./... -count=1 -p 1`
   - Go（Windows 模块）：`cd windows/frontend; npm ci; npm run build` 后 `cd ..; GOWORK=off go test ./... -count=1 -p 1`
@@ -87,75 +78,63 @@
 
 ### 1.9 风险
 
-- Windows 亮度读取存在设备差异；按约定 `-1` 降级，并尽量避免高频刷屏日志。
-- Android 反射调用兼容性：必须确保亮度方法为“可选”，旧 AAR 仍可正常使用既有功能。
+- Android `WRITE_SETTINGS` 属于特殊授权：未引导情况下可能执行失败（本轮先保证链路完整与不崩溃）。
+- Windows 亮度 API 设备差异较大：按 best-effort + 日志可观测处理。
 
 ---
 
 ## 2. 架构设计（分析）
 
-### 2.1 总体方案（含选型理由）
+### 2.1 总体方案
 
-- 把“亮度”作为一个新的 metric 加入现有链路（最小侵入，扩展性最好）：
-  - 平台采集（Windows：Go collector；Android：Kotlin poller）
-  - 写入 Runtime：`handleMetricUpdate(metric,value)`
-  - 通过 bindings 映射到 VarStore：`publishVar(owner=node_id, target=hub_id, name=var_name, value, visibility)`
-- Device ID 默认生成放在“应用层”完成（Windows bootstrap / Android prefs），不改变 auth 子协议与 server 行为。
+沿用已存在的“变量既是状态也是命令”机制：
+
+1) 其它节点写入 VarStore（owner 指向 MetricsNode 的 NodeID）  
+2) MetricsNode 在 `notify_set` 中识别亮度变量（通过 bindings 反查 metric）  
+3) 入队控制动作（`brightness_percent`）  
+4) 平台侧消费动作并执行：  
+   - Windows：Go 控制 worker 直接调用 WinAPI 设置亮度  
+   - Android：`NodeService` 轮询 actions 并写系统亮度设置
 
 ### 2.2 模块职责
 
-- `core/metrics`：定义 metric 常量；Windows 平台采集（亮度/电量/音量）。
-- `core/runtime`：运行时配置（bindings/visibility）；接收 metric 更新并差量发布到 VarStore。
-- `windows`：Wails App：bootstrap（addr/device_id）持久化、Auth 操作、状态展示。
-- `nodemobile`：gomobile 导出：Android 通过 JNI 将亮度/音量/电量推入 Go Runtime。
-- `android/app`：后台 Service 采集与推送；前台 Activity 提供 addr/device_id 配置与启动/停止。
+- `core/runtime/varstore_inbound.go`：下行通知解析 + 值校验/clamp + 入队控制动作
+- `core/runtime/control_worker_windows.go`：Windows 侧消费动作并执行
+- `core/actuator/*`：封装 Windows 亮度执行细节（避免 runtime 直接堆 WinAPI 调用）
+- `android/.../NodeService.kt`：Android 侧消费动作并执行（Settings 写入）
+- `android/.../AndroidManifest.xml`：声明所需权限
 
-### 2.3 数据 / 调用流
+### 2.3 数据/调用流（简图）
 
-**Windows**
+`VarStore notify_set` → `Runtime.handleVarStoreNotifySet` → `controlQ.Enqueue("brightness_percent","N")` →  
+Windows：`controlWorker` → `actuator.SetPrimaryMonitorBrightnessPercent(N)`  
+Android：`NodeService.dequeueActions()` → `applyControlActions()` → `Settings.System.putInt(..., raw)`
 
-1) `windows/app.go` 启动时初始化 `runtime.New("config")` 与 `bootstrap.json` store  
-2) 若 `auth.device_id` 为空 → 生成默认 ID 并 `boot.Set(...)`  
-3) `StartReporting()` → `metrics.StartPlatformCollectors()` → `brightnessLoop()`  
-4) `emit("brightness_percent", "N")` → Runtime `handleMetricUpdate` → VarStore `set`
+### 2.4 接口草案（不改协议）
 
-**Android**
-
-1) Activity/Service 读取 prefs；若 `device_id` 为空 → 生成并写回  
-2) Service 轮询 `Settings.System.SCREEN_BRIGHTNESS` → 计算百分比  
-3) `bridge.updateBrightnessPercent(percent)` → GoMobile `UpdateBrightnessPercent` → Runtime `UpdateMetric` → VarStore `set`
-
-### 2.4 接口草案
-
-- metric：`core/metrics.MetricBrightnessPercent = "brightness_percent"`
-- 默认 bindings（`metrics.bindings_json`）新增：
-  - `{ "metric": "brightness_percent", "var_name": "sys_brightness_percent" }`
-- Android GoMobile 导出（`nodemobile`）新增：
-  - `UpdateBrightnessPercent(percent string)`
+- 继续使用：
+  - VarStore：`notify_set`
+  - 控制动作：`ControlAction{metric,value}`（JSON）
+  - Android：`nodemobile.DequeueActions()`（已存在）
 
 ### 2.5 错误与安全
 
-- 亮度采集失败：emit `-1`（符合需求）；日志应可观测但避免高频刷屏（可用简单节流）。
-- Device ID：随机生成（不使用 hostname / 用户名 / ANDROID_ID），降低隐私暴露风险。
-- Android：亮度导出方法使用“可选反射”；即便旧 AAR 不含该方法，也不影响 GoBridge 其它能力。
+- 只处理 owner 匹配的下行写入（沿用现有逻辑）。
+- 执行失败：Windows 记录 warn；Android runCatching 吞掉异常；由采集上报纠偏 VarStore 值。
 
 ### 2.6 性能与测试策略
 
 - 性能关键点：
-  - Windows 亮度轮询 `2s`，避免高频 WinAPI + 物理监视器枚举。
-  - Android 亮度轮询 `1s`，并在 Kotlin 侧“变化才上报”。
-  - Runtime 已有 `lastPublished` 去重，避免重复 VarStore set。
+  - actionQueue 按 metric 覆盖，避免重复写入；
+  - Android 控制轮询仅在 actions 非空时才执行写入。
 - 测试策略：
-  - Go：`go test` 编译 +（必要时）补充 bindings 迁移单测。
-  - Windows：需要 `frontend/dist` 才能 `go test ./...`，按既有流程先 `npm run build`。
-  - Android：`assembleDebug` 保证 Kotlin 编译与反射兼容。
+  - Go：补充 `varstore_inbound` 对 `brightness_percent` 的路由单测（验证 clamp + 入队）。
+  - Android：`assembleDebug` 确保编译与权限声明正确。
 
 ### 2.7 可扩展性设计点
 
-- 新增更多系统指标时：只需
-  1) 在 `core/metrics` 增加 metric 常量；
-  2) 在 `core/runtime/config.go` 放行该 metric（`supportedMetric` + 默认 bindings）；
-  3) 在平台采集层采集并调用 `emit/UpdateMetric`。
+- 后续新增更多“可控”指标（如亮度/网络开关等）时：
+  - 只需在 `handleVarStoreNotifySet` 增加 metric 分支，并在平台侧实现执行即可。
 
 ---
 
@@ -163,87 +142,68 @@
 
 ### T0 - 基线确认
 
-- 目标：确保分支与 worktree 正确，且变更可控。
+- 目标：worktree/分支正确，且工作区干净。
 - 验收：
-  - 在本 worktree：`git status --porcelain` 为空。
+  - `git status --porcelain` 为空。
+- 回滚点：
+  - 删除 worktree + 删除分支即可回滚（未改 main）。
 
-### T1 - core：新增 brightness metric + 默认 bindings
+### T1 - Go core：新增 brightness 下行路由
 
-- 目标：亮度 metric 能被 bindings 识别并可默认发布到 `sys_brightness_percent`。
+- 目标：`sys_brightness_percent`（或用户自定义绑定）被写入时，入队 `brightness_percent` 控制动作。
 - 涉及文件：
-  - `core/metrics/metrics.go`
-  - `core/runtime/config.go`
+  - `core/runtime/varstore_inbound.go`
+  - `core/runtime/varstore_inbound_test.go`（新增用例）
 - 验收：
-  - `supportedMetric("brightness_percent")==true`
-  - `defaultBindings()` 含亮度绑定。
+  - `value=200` 入队为 `100`；
+  - `value=abc` 不入队；
+  - owner 不匹配不处理。
+- 测试点：
+  - `GOWORK=off go test ./... -count=1 -p 1`
+- 回滚点：
+  - 回滚上述文件修改即可。
 
-### T2 - core：旧默认 bindings 安全迁移（可选加单测）
+### T2 - Windows：执行亮度控制
 
-- 目标：升级后“未自定义 bindings 的老用户”自动获得亮度绑定；已自定义的用户不被覆盖。
+- 目标：Windows 控制 worker 能执行 `brightness_percent` 动作并设置主显示器亮度。
 - 涉及文件：
-  - `core/runtime/config.go`
-  - （可选）`core/runtime/config_test.go`
+  - `core/runtime/control_worker_windows.go`
+  - `core/actuator/brightness_windows.go`（新增）
 - 验收：
-  - 当 `metrics.bindings_json` 完全等于“旧默认 3 项”时自动升级到“新默认 4 项”；
-  - 其它情况不改动用户 bindings。
+  - 动作入队后，系统亮度发生变化；
+  - 执行失败仅 warn，不影响其它动作与上报。
+- 测试点：
+  - `GOWORK=off go test ./... -count=1 -p 1`（包含 windows build）
+- 回滚点：
+  - 回滚控制分支与 actuator 文件。
 
-### T3 - Windows：亮度采集（主显示器）+ 失败 `-1`
+### T3 - Android：执行亮度控制
 
-- 目标：Windows 可读到亮度则上报 `0~100`；不可读上报 `-1`。
+- 目标：Android `NodeService` 能消费 `brightness_percent` 动作并写入系统亮度。
 - 涉及文件：
-  - `core/metrics/collectors_windows.go`
-- 验收：
-  - 亮度读取失败不会 panic，且 emit `-1`；
-  - 轮询间隔 `2s`。
-
-### T4 - Windows：Device ID 默认生成并持久化
-
-- 目标：首次启动未配置 Device ID 时自动生成并写入 bootstrap。
-- 涉及文件：
-  - `windows/app.go`
-- 验收：
-  - `bootstrap.json` 中 `auth.device_id` 不为空；
-  - UI `Device ID` 输入框默认显示该值。
-
-### T5 - Android：亮度采集 + Device ID 默认生成（Activity + Service 兜底）
-
-- 目标：Android 在无手工输入时也能稳定启动并上报亮度。
-- 涉及文件：
-  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
   - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
+  - `android/app/src/main/AndroidManifest.xml`
 - 验收：
-  - prefs `device_id` 为空时会生成并写回；
-  - Service 从 intent 取不到 device_id 时会兜底读取/生成；
-  - 亮度变化触发上报（无变化不重复上报）。
+  - 写入后系统亮度变化（已授权前提）；未授权时不崩溃。
+- 测试点：
+  - `cd android; ./gradlew :app:assembleDebug`
+- 回滚点：
+  - 回滚 Kotlin 与 manifest 修改。
 
-### T6 - Android：GoMobile API 扩展 + 可选反射兼容
+### T4 - 回归验证（端到端）
 
-- 目标：新增亮度导出方法，同时不破坏旧 AAR 的 GoBridge 初始化。
-- 涉及文件：
-  - `nodemobile/nodemobile.go`
-  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeBridge.kt`
-- 验收：
-  - 亮度方法缺失时不会抛出导致 GoBridge 构造失败（仅亮度更新 no-op）。
-- 备注（开发验证/交付）：
-  - 若需要实际启用 GoBridge，请运行：`pwsh -File scripts/build_aar.ps1` 生成 `android/app/libs/myflowhub.aar`。
+- 目标：Win 端通过 VarPool 写入亮度变量，Windows/Android 执行生效。
+- 步骤：
+  - 启动：`pwsh -File d:\\project\\MyFlowHub3\\scripts\\run-dev.ps1 -WaitServer`
+  - 在 `MyFlowHub-Win` 写入 `sys_brightness_percent=30/200`
+  - 观察本机亮度变化 + VarStore 值纠偏（clamp）。
+- 回滚点：
+  - 回滚分支提交即可。
 
-### T7 - 回归验证
+### T5 - Code Review（阶段 3.3）+ 归档（阶段 4）
 
-- Go（根模块）：`GOWORK=off go test ./... -count=1 -p 1`
-- Go（Windows 模块）：
-  - `cd windows/frontend; npm ci; npm run build`
-  - `cd ..; GOWORK=off go test ./... -count=1 -p 1`
-- Go（nodemobile）：`cd nodemobile; GOWORK=off go test ./... -count=1 -p 1`
-- Android：`cd android; ./gradlew :app:assembleDebug`
+- Code Review 清单：
+  - 需求覆盖、架构合理性、性能风险、稳定性与安全、测试覆盖
+- 归档输出：
+  - `docs/change/YYYY-MM-DD_metricsnode-brightness-control.md`
 
-### T8 - Code Review（阶段 3.3）
-
-- 需求覆盖：亮度上报 + 默认 Device ID（Win/Android）。
-- 架构合理性：沿用 metric→bindings→varstore 的扩展点，不引入新 schema。
-- 性能风险：轮询频率、WinAPI 调用成本、Android 去抖。
-- 稳定性与安全：失败降级 `-1`；Device ID 不含敏感信息；Android 可选反射。
-- 测试覆盖：回归命令通过；（若加单测）迁移逻辑覆盖。
-
-### T9 - 归档（阶段 4）
-
-- 输出：`docs/change/2026-03-02_metricsnode-brightness-deviceid.md`
