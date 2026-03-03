@@ -159,4 +159,3 @@ func TestInitRuntimeConfig_NoMigrateCustomBindings(t *testing.T) {
 		t.Fatalf("expected custom bindings_json preserved, got %q", got)
 	}
 }
-
