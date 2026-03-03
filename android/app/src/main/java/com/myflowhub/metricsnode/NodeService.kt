@@ -293,10 +293,6 @@ class NodeService : Service() {
         return try {
             val network = cm.activeNetwork ?: return 0 to "none"
             val caps = cm.getNetworkCapabilities(network) ?: return 0 to "none"
-            val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-            if (!hasInternet) {
-                return 0 to "none"
-            }
             val netType = when {
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "wifi"
                 caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "ethernet"
