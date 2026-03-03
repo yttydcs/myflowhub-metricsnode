@@ -218,6 +218,168 @@ func UpdateBrightnessPercent(percent string) {
 	r.UpdateMetric(metrics.MetricBrightnessPercent, fmt.Sprintf("%d", n))
 }
 
+func UpdateBatteryCharging(charging string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	v := strings.TrimSpace(charging)
+	if v == "" {
+		return
+	}
+	if v == "-1" {
+		r.UpdateMetric(metrics.MetricBatteryCharging, "-1")
+		return
+	}
+	if isTruthy(v) {
+		r.UpdateMetric(metrics.MetricBatteryCharging, "1")
+		return
+	}
+	r.UpdateMetric(metrics.MetricBatteryCharging, "0")
+}
+
+func UpdateBatteryOnAC(onAC string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	v := strings.TrimSpace(onAC)
+	if v == "" {
+		return
+	}
+	if v == "-1" {
+		r.UpdateMetric(metrics.MetricBatteryOnAC, "-1")
+		return
+	}
+	if isTruthy(v) {
+		r.UpdateMetric(metrics.MetricBatteryOnAC, "1")
+		return
+	}
+	r.UpdateMetric(metrics.MetricBatteryOnAC, "0")
+}
+
+func UpdateNetOnline(online string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	v := strings.TrimSpace(online)
+	if v == "" {
+		return
+	}
+	if v == "-1" {
+		r.UpdateMetric(metrics.MetricNetOnline, "-1")
+		return
+	}
+	if isTruthy(v) {
+		r.UpdateMetric(metrics.MetricNetOnline, "1")
+		return
+	}
+	r.UpdateMetric(metrics.MetricNetOnline, "0")
+}
+
+func UpdateNetType(netType string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	v := strings.ToLower(strings.TrimSpace(netType))
+	if v == "" {
+		return
+	}
+	if v == "-1" {
+		r.UpdateMetric(metrics.MetricNetType, "-1")
+		return
+	}
+	switch v {
+	case "none", "wifi", "ethernet", "cellular", "unknown":
+		// ok
+	default:
+		v = "unknown"
+	}
+	r.UpdateMetric(metrics.MetricNetType, v)
+}
+
+func UpdateCPUPercent(percent string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	p := strings.TrimSpace(percent)
+	if p == "" {
+		return
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return
+	}
+	if n < 0 {
+		r.UpdateMetric(metrics.MetricCPUPercent, "-1")
+		return
+	}
+	if n > 100 {
+		n = 100
+	}
+	r.UpdateMetric(metrics.MetricCPUPercent, fmt.Sprintf("%d", n))
+}
+
+func UpdateMemPercent(percent string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	p := strings.TrimSpace(percent)
+	if p == "" {
+		return
+	}
+	n, err := strconv.Atoi(p)
+	if err != nil {
+		return
+	}
+	if n < 0 {
+		r.UpdateMetric(metrics.MetricMemPercent, "-1")
+		return
+	}
+	if n > 100 {
+		n = 100
+	}
+	r.UpdateMetric(metrics.MetricMemPercent, fmt.Sprintf("%d", n))
+}
+
+func UpdateFlashlightEnabled(enabled string) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return
+	}
+	v := strings.TrimSpace(enabled)
+	if v == "" {
+		return
+	}
+	if v == "-1" {
+		r.UpdateMetric(metrics.MetricFlashlightEnabled, "-1")
+		return
+	}
+	if isTruthy(v) {
+		r.UpdateMetric(metrics.MetricFlashlightEnabled, "1")
+		return
+	}
+	r.UpdateMetric(metrics.MetricFlashlightEnabled, "0")
+}
+
 func GetLastError() string {
 	mu.Lock()
 	defer mu.Unlock()
@@ -235,6 +397,16 @@ func DequeueActions() string {
 	actions := r.DequeueActions()
 	raw, _ := json.Marshal(actions)
 	return string(raw)
+}
+
+func isTruthy(text string) bool {
+	v := strings.ToLower(strings.TrimSpace(text))
+	switch v {
+	case "1", "true", "yes", "y", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 // EnsureLinked is a no-op function to make it obvious in Java/Kotlin that the AAR is present.

@@ -40,8 +40,15 @@ interface NodeBridge {
     fun status(): NodeState
 
     fun updateBatteryPercent(percent: Int)
+    fun updateBatteryCharging(charging: Int)
+    fun updateBatteryOnAC(onAC: Int)
     fun updateVolume(volumePercent: Int, muted: Boolean)
     fun updateBrightnessPercent(percent: Int)
+    fun updateNetOnline(online: Int)
+    fun updateNetType(netType: String)
+    fun updateCPUPercent(percent: Int)
+    fun updateMemPercent(percent: Int)
+    fun updateFlashlightEnabled(enabled: Int)
 
     fun dequeueActions(): List<NodeAction>
 }
@@ -63,9 +70,23 @@ class StubNodeBridge : NodeBridge {
 
     override fun updateBatteryPercent(percent: Int) {}
 
+    override fun updateBatteryCharging(charging: Int) {}
+
+    override fun updateBatteryOnAC(onAC: Int) {}
+
     override fun updateVolume(volumePercent: Int, muted: Boolean) {}
 
     override fun updateBrightnessPercent(percent: Int) {}
+
+    override fun updateNetOnline(online: Int) {}
+
+    override fun updateNetType(netType: String) {}
+
+    override fun updateCPUPercent(percent: Int) {}
+
+    override fun updateMemPercent(percent: Int) {}
+
+    override fun updateFlashlightEnabled(enabled: Int) {}
 
     override fun dequeueActions(): List<NodeAction> = emptyList()
 }
@@ -78,9 +99,16 @@ class GoNodeBridge : NodeBridge {
     private val statusMethod: Method
 
     private val updateBatteryMethod: Method
+    private val updateBatteryChargingMethod: Method?
+    private val updateBatteryOnACMethod: Method?
     private val updateVolumePercentMethod: Method
     private val updateVolumeMutedMethod: Method
     private val updateBrightnessMethod: Method?
+    private val updateNetOnlineMethod: Method?
+    private val updateNetTypeMethod: Method?
+    private val updateCPUPercentMethod: Method?
+    private val updateMemPercentMethod: Method?
+    private val updateFlashlightEnabledMethod: Method?
     private val dequeueActionsMethod: Method
 
     init {
@@ -90,9 +118,16 @@ class GoNodeBridge : NodeBridge {
         statusMethod = GoReflect.method(cls, "Status")
 
         updateBatteryMethod = GoReflect.method(cls, "UpdateBatteryPercent", String::class.java)
+        updateBatteryChargingMethod = runCatching { GoReflect.method(cls, "UpdateBatteryCharging", String::class.java) }.getOrNull()
+        updateBatteryOnACMethod = runCatching { GoReflect.method(cls, "UpdateBatteryOnAC", String::class.java) }.getOrNull()
         updateVolumePercentMethod = GoReflect.method(cls, "UpdateVolumePercent", String::class.java)
         updateVolumeMutedMethod = GoReflect.method(cls, "UpdateVolumeMuted", String::class.java)
         updateBrightnessMethod = runCatching { GoReflect.method(cls, "UpdateBrightnessPercent", String::class.java) }.getOrNull()
+        updateNetOnlineMethod = runCatching { GoReflect.method(cls, "UpdateNetOnline", String::class.java) }.getOrNull()
+        updateNetTypeMethod = runCatching { GoReflect.method(cls, "UpdateNetType", String::class.java) }.getOrNull()
+        updateCPUPercentMethod = runCatching { GoReflect.method(cls, "UpdateCPUPercent", String::class.java) }.getOrNull()
+        updateMemPercentMethod = runCatching { GoReflect.method(cls, "UpdateMemPercent", String::class.java) }.getOrNull()
+        updateFlashlightEnabledMethod = runCatching { GoReflect.method(cls, "UpdateFlashlightEnabled", String::class.java) }.getOrNull()
         dequeueActionsMethod = GoReflect.method(cls, "DequeueActions")
 
         // Optional probe to help diagnose missing AAR in runtime.
@@ -113,6 +148,18 @@ class GoNodeBridge : NodeBridge {
         runCatching { updateBatteryMethod.invoke(null, text) }
     }
 
+    override fun updateBatteryCharging(charging: Int) {
+        val method = updateBatteryChargingMethod ?: return
+        val text = boolishText(charging)
+        runCatching { method.invoke(null, text) }
+    }
+
+    override fun updateBatteryOnAC(onAC: Int) {
+        val method = updateBatteryOnACMethod ?: return
+        val text = boolishText(onAC)
+        runCatching { method.invoke(null, text) }
+    }
+
     override fun updateVolume(volumePercent: Int, muted: Boolean) {
         val percent = volumePercent.coerceIn(0, 100).toString()
         val mutedText = if (muted) "1" else "0"
@@ -126,6 +173,35 @@ class GoNodeBridge : NodeBridge {
         runCatching { method.invoke(null, text) }
     }
 
+    override fun updateNetOnline(online: Int) {
+        val method = updateNetOnlineMethod ?: return
+        val text = boolishText(online)
+        runCatching { method.invoke(null, text) }
+    }
+
+    override fun updateNetType(netType: String) {
+        val method = updateNetTypeMethod ?: return
+        runCatching { method.invoke(null, netType.trim()) }
+    }
+
+    override fun updateCPUPercent(percent: Int) {
+        val method = updateCPUPercentMethod ?: return
+        val text = if (percent < 0) "-1" else percent.coerceIn(0, 100).toString()
+        runCatching { method.invoke(null, text) }
+    }
+
+    override fun updateMemPercent(percent: Int) {
+        val method = updateMemPercentMethod ?: return
+        val text = if (percent < 0) "-1" else percent.coerceIn(0, 100).toString()
+        runCatching { method.invoke(null, text) }
+    }
+
+    override fun updateFlashlightEnabled(enabled: Int) {
+        val method = updateFlashlightEnabledMethod ?: return
+        val text = boolishText(enabled)
+        runCatching { method.invoke(null, text) }
+    }
+
     override fun dequeueActions(): List<NodeAction> {
         val raw = runCatching { dequeueActionsMethod.invoke(null) as String }.getOrNull() ?: return emptyList()
         return NodeActionJson.parseList(raw)
@@ -136,6 +212,14 @@ class GoNodeBridge : NodeBridge {
             NodeStateJson.parse(fn())
         } catch (t: Throwable) {
             NodeState(running = false, lastError = t.message ?: t.toString())
+        }
+    }
+
+    private fun boolishText(n: Int): String {
+        return when {
+            n < 0 -> "-1"
+            n == 0 -> "0"
+            else -> "1"
         }
     }
 }
