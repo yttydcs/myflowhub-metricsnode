@@ -78,12 +78,28 @@ func (r *Runtime) handleVarStoreNotifySet(hdr core.IHeader, resp protovar.VarRes
 	}
 
 	cfg := r.configSnapshot()
-	metric, ok := metricByVarName(cfg, name)
+	binding, ok := bindingByVarName(cfg, name)
 	if !ok {
 		return
 	}
+	metric := binding.Metric
 
 	r.updatePublishedShadow(name, value, resp.Visibility)
+
+	if metrics.IsControllable(metric) && !binding.Writable {
+		correct, ok := r.currentPublishedMetricValue(metric, cfg)
+		if !ok || correct == "" {
+			if r.log != nil {
+				r.log.Warn("writable disabled; correction unavailable", "metric", metric, "var", name)
+			}
+			return
+		}
+		if value == correct {
+			return
+		}
+		r.publishVar(auth.NodeID, auth.HubID, name, correct, cfg.VisibilityDefault)
+		return
+	}
 
 	switch metric {
 	case metrics.MetricVolumePercent:
@@ -151,16 +167,32 @@ func (r *Runtime) handleVarStoreNotifySet(hdr core.IHeader, resp protovar.VarRes
 }
 
 func metricByVarName(cfg runtimeConfig, varName string) (string, bool) {
-	varName = strings.TrimSpace(varName)
-	if varName == "" || len(cfg.Bindings) == 0 {
+	b, ok := bindingByVarName(cfg, varName)
+	if !ok {
 		return "", false
+	}
+	return b.Metric, true
+}
+
+func bindingByVarName(cfg runtimeConfig, varName string) (varBinding, bool) {
+	varName = strings.TrimSpace(varName)
+	if varName == "" {
+		return varBinding{}, false
+	}
+	if len(cfg.BindingByVarName) > 0 {
+		if b, ok := cfg.BindingByVarName[varName]; ok && strings.TrimSpace(b.Metric) != "" {
+			return b, true
+		}
+	}
+	if len(cfg.Bindings) == 0 {
+		return varBinding{}, false
 	}
 	for _, b := range cfg.Bindings {
 		if b.VarName == varName {
-			return b.Metric, true
+			return varBinding{Metric: b.Metric, Writable: metrics.IsControllable(b.Metric)}, true
 		}
 	}
-	return "", false
+	return varBinding{}, false
 }
 
 func (r *Runtime) updatePublishedShadow(varName, value, visibility string) {

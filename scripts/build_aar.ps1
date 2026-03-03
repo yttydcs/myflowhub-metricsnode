@@ -36,11 +36,21 @@ Push-Location $moduleDir
 try {
   Write-Host "Running: gomobile init" -ForegroundColor Cyan
   gomobile init
+  if ($LASTEXITCODE -ne 0) {
+    throw "gomobile init failed (exit=$LASTEXITCODE). Please ensure Android SDK/NDK is installed and ANDROID_HOME is set."
+  }
 
   Write-Host "Running: gomobile bind" -ForegroundColor Cyan
   gomobile bind -target $Target -androidapi $AndroidApi -javapkg $JavaPkg -o $outPath .
+  if ($LASTEXITCODE -ne 0) {
+    throw "gomobile bind failed (exit=$LASTEXITCODE). Please ensure Android SDK/NDK is installed and ANDROID_HOME is set."
+  }
 } finally {
   Pop-Location
+}
+
+if (-not (Test-Path $outPath)) {
+  throw "AAR not generated: $outPath"
 }
 
 Write-Host "OK: $outPath" -ForegroundColor Green

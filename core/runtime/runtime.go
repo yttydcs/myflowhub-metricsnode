@@ -67,6 +67,8 @@ type Runtime struct {
 	cfgStore *configstore.Store
 	cfgMu    sync.RWMutex
 	cfg      runtimeConfig
+	cfgChMu  sync.Mutex
+	cfgCh    chan struct{}
 
 	reportMu      sync.Mutex
 	reportCancel  context.CancelFunc
@@ -98,6 +100,7 @@ func New(workDir string, log *slog.Logger) (*Runtime, error) {
 		log:     log,
 		workDir: abs,
 	}
+	rt.cfgCh = make(chan struct{})
 	rt.controlQ = newActionQueue()
 	rt.keys = rtauth.NewKeyStore(filepath.Join(abs, "node_keys.json"))
 	_ = rt.loadAuthSnapshot()
@@ -105,6 +108,28 @@ func New(workDir string, log *slog.Logger) (*Runtime, error) {
 		return nil, err
 	}
 	return rt, nil
+}
+
+func (r *Runtime) configChangedChan() <-chan struct{} {
+	if r == nil {
+		return nil
+	}
+	r.cfgChMu.Lock()
+	ch := r.cfgCh
+	r.cfgChMu.Unlock()
+	return ch
+}
+
+func (r *Runtime) signalConfigChanged() {
+	if r == nil {
+		return
+	}
+	r.cfgChMu.Lock()
+	if r.cfgCh != nil {
+		close(r.cfgCh)
+	}
+	r.cfgCh = make(chan struct{})
+	r.cfgChMu.Unlock()
 }
 
 func (r *Runtime) WorkDir() string {
@@ -485,7 +510,18 @@ func (r *Runtime) StartReporting() error {
 	}
 
 	r.startControlWorker(ctx)
-	metrics.StartPlatformCollectors(ctx, r.log, r.handleMetricUpdate)
+	enabled := func(metric string) bool {
+		metric = strings.TrimSpace(metric)
+		if metric == "" {
+			return false
+		}
+		r.cfgMu.RLock()
+		ok := r.cfg.EnabledByMetric != nil && r.cfg.EnabledByMetric[metric]
+		r.cfgMu.RUnlock()
+		return ok
+	}
+	configChanged := func() <-chan struct{} { return r.configChangedChan() }
+	metrics.StartPlatformCollectors(ctx, r.log, r.handleMetricUpdate, enabled, configChanged)
 	if r.log != nil {
 		r.log.Info("metrics reporting started")
 	}

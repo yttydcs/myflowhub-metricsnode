@@ -88,5 +88,24 @@ export namespace runtime {
 	    }
 	}
 
+	export class MetricSetting {
+	    metric: string;
+	    var_name: string;
+	    enabled: boolean;
+	    writable: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new MetricSetting(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.metric = source["metric"];
+	        this.var_name = source["var_name"];
+	        this.enabled = source["enabled"];
+	        this.writable = source["writable"];
+	    }
+	}
+
 }
 

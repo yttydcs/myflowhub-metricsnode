@@ -1,183 +1,76 @@
-# Plan - MyFlowHub-MetricsNode（P0 指标扩展 + Android 手电）
+# Plan - MyFlowHub-MetricsNode（Windows + Android：两页 UI + 指标设置页）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-p0-metrics-flashlight`  
-> 分支：`feat/metricsnode-p0-metrics-flashlight`  
-> 日期：2026-03-02  
+> Worktree：`d:\project\MyFlowHub3\worktrees\feat-metricsnode-settings-ui`  
+> 分支：`feat/metricsnode-settings-ui`  
+> 日期：2026-03-03  
 >
-> 本 workflow 目标：在既有 VarStore 子协议与 bindings 机制上扩展 P0 指标（Windows + Android），并为 Android 增加 `flashlight_enabled`（可读可写）。
+> 本 workflow 目标：为 MetricsNode（Windows/Wails + Android/Compose+Service）实现“连接页 + 设置页”两页 UI，并在设置页提供 **声明式** 的指标配置（enabled / writable / var_name）。配置通过现有 Management `config_list/get/set`（devices config）持久化与远程编辑。
 
 ---
 
-## 1. 需求分析
+## 0. 当前状态
+
+- Windows：Wails 单页 UI（Bootstrap/Auth/StartReporting + metrics dump）。
+- Android：Compose 单页（Start/Stop Service）+ `NodeService` 后台采集与执行。
+- Go runtime：
+  - runtime config 已支持 `metrics.bindings_json` / `metrics.visibility_default` / `metrics.battery.no_battery_value`
+  - Management 子协议已支持 `config_list/get/set` 写入 runtime_config.json
+  - VarStore inbound 已支持 volume/brightness/flashlight 控制与只读纠偏（当前“可写限制”尚未按配置化）
+- 约束：
+  - `enabled=false` 必须停止采集/轮询（Windows collectors 与 Android Service 都要做到“真正不采集”）。
+  - 允许全关（bindings 允许为空）。
+
+---
+
+## 1. 需求分析（已确认）
 
 ### 1.1 目标
 
-- 扩展 P0 指标（Windows + Android）：
-  - `battery_charging`（0/1/-1）
-  - `battery_on_ac`（0/1/-1）
-  - `net_online`（0/1/-1）
-  - `net_type`（none/wifi/ethernet/cellular/unknown/-1）
-  - `cpu_percent`（0~100/-1）
-  - `mem_percent`（0~100/-1）
-- Android 额外能力：
-  - `flashlight_enabled`（0/1/-1），可读可写（写入后触发系统手电开关）。
+- Windows 与 Android 都改成 2 个界面：
+  - **连接页**：`Connect / Register / Login / StartReporting` 四步按钮。
+  - **设置页**：以列表展示所有指标，并配置：
+    - `enabled`：是否启用（控制上报 + 下行映射）；`enabled=false` 停采集/轮询；UI 显示 `-`。
+    - `writable`：仅对可控指标提供；`false` 时收到写入不执行控制，并纠偏回真实值。
+    - `var_name`：绑定到 VarStore 的变量名；输入 debounce 保存；自动立即生效。
+- Android 连接页增加 **Stop（Stop All）**：停止上报、断开、停止前台服务并退出采集。
+- 配置存储：使用 runtime config（devices config）保存；选择 **A：单 Key + JSON**；key 名为 `metrics.settings_json`。
 
-### 1.2 背景/现状
+### 1.2 不做
 
-- VarStore `value` 当前为 `string`，因此“枚举”使用约定字符串集合表达，不在协议层做强类型校验。
-- MetricsNode 当前已支持：电量/音量/静音/亮度（含 Windows 亮度 WMI fallback）。
+- 不做“市场/扩展包”。
+- 不新增协议字段（仍使用既有 VarStore/Management 子协议）。
 
-### 1.3 范围
+### 1.3 验收标准
 
-- 必须：
-  - 新增上述 metric 常量，并纳入 `metrics.bindings_json` 的默认 bindings：
-    - 跨平台默认：P0 指标 + 既有电量/音量/静音/亮度；
-    - Android 默认额外包含 `flashlight_enabled`；
-    - 保持“仅迁移旧默认，不覆盖用户自定义”。
-  - Windows：新增采集（battery 状态/网络/CPU/内存）。
-  - Android：新增采集（battery 状态/网络/CPU/内存/手电状态）。
-  - 下行控制：
-    - `flashlight_enabled`：Android 执行写入；不支持/失败时不崩溃并纠偏为真实值或 `-1`。
-  - 只读变量被外部写入时：
-    - 不执行；并尽量将 VarStore 纠偏回当前正确值（若当前值未知则 warn 并忽略）。
-- 不做：
-  - 不改变 VarStore 子协议与 payload schema。
-  - 不引入 WiFi/蓝牙/锁屏等其它可控项（后续单开）。
-
-### 1.4 使用场景
-
-- 监控：UI 订阅 `sys_cpu_percent/sys_mem_percent/sys_net_type` 等变量显示设备状态。
-- Android 手电：
-  - 其它节点对 owner=<AndroidMetricsNodeNodeID> 写 `sys_flashlight_enabled=1` → 打开手电；
-  - 写 `0` → 关闭手电；
-  - 不支持/无权限 → 上报 `-1` 并纠偏。
-
-### 1.5 功能需求（值域/语义）
-
-- 通用约定：
-  - `-1`：读不到/不支持/未知；
-  - 数值均为十进制字符串；
-  - boolish：`0/1`。
-- `battery_charging`：
-  - 语义按用户确认：**插电（AC/USB/无线）即视为 1**（即便电量已满）。
-- `net_type`：
-  - 固定枚举字符串：`none/wifi/ethernet/cellular/unknown`，读不到/无权限时 `-1`。
-- `flashlight_enabled`：
-  - `1`：手电开；`0`：关；读不到/不支持 `-1`。
-  - 写入失败：不崩溃，后续由“读取/回调上报”纠偏为真实值或 `-1`。
-
-### 1.6 非功能需求
-
-- 稳定性：长时间运行不泄漏，不崩溃；权限不足/硬件不支持时 graceful degrade。
-- 性能：能事件驱动则事件驱动；轮询保持秒级且轻量（CPU/内存）。
-- 安全：下行控制仍只接受 owner 匹配（沿用既有校验逻辑）。
-
-### 1.7 输入输出
-
-- 输入：
-  - Windows：系统 API（电源/网络/CPU/内存）。
-  - Android：系统服务（Battery/Connectivity/ActivityManager/CameraManager）。
-  - VarStore `notify_set`（用于下行控制与只读纠偏）。
-- 输出：
-  - 上报：metrics → bindings → VarStore set（默认 `sys_<metric>`；可被用户覆盖）。
-  - 控制：Android 手电开关；失败则纠偏为真实状态或 `-1`。
-
-### 1.8 验收标准
-
-- Android：
-  - `flashlight_enabled` 可读可写：写 `sys_flashlight_enabled=1/0` 能切换手电；不支持/读不到则上报 `-1`。
-  - P0 指标按值域持续上报。
-- Windows：
-  - P0 指标按值域持续上报。
-- 回归命令通过：
-  - Go（根模块）：`GOWORK=off go test ./... -count=1 -p 1`
-  - Go（Windows 模块）：`cd windows/frontend; npm ci; npm run build` 后 `cd ..; GOWORK=off go test ./... -count=1 -p 1`
-  - Go（nodemobile）：`cd nodemobile; GOWORK=off go test ./... -count=1 -p 1`
-  - Android：`cd android; ./gradlew :app:assembleDebug`
-
-### 1.9 风险
-
-- `net_online/net_type` 的平台口径差异：本轮以“合理近似 + 可观测”为主，后续可演进为更精确的“默认路由/validated”策略。
-- Android 手电需要 `CAMERA` 权限与硬件支持：无权限/不支持时必须稳定输出 `-1` 且忽略写入并纠偏。
+- Windows/Android：连接页能完成四步操作并启动上报；Android Stop All 停止前台服务并断开。
+- 设置页：变更 enabled/writable/var_name 会自动保存并立即生效。
+- enabled=false：对应指标不再采集/轮询；设置页显示 `-`。
+- 全关：允许保存成功（bindings 为空不报错）。
 
 ---
 
-## 2. 架构设计（分析）
+## 2. 架构设计（分析）（已确认）
 
-### 2.1 总体方案（不改协议）
+### 2.1 总体方案
 
-- VarStore `value: string` 承载全部指标：
-  - “枚举”以约定字符串表达（例如 `net_type=wifi`）。
-- 上行：
-  - Windows：Go collectors 采集 → `emit(metric,value)` → runtime 按 bindings 发布。
-  - Android：Kotlin NodeService 采集 → `NodeBridge.updateXxx(value)` →（gomobile 导出）→ Go runtime 按 bindings 发布。
-- 下行（Android 手电）：
-  - VarStore `notify_set` → `handleVarStoreNotifySet` 入队 `flashlight_enabled` 控制动作 → Android NodeService 轮询 `DequeueActions` 并调用 CameraManager 执行 → torch callback / re-read 上报真实状态完成纠偏。
-- 只读纠偏：
-  - 收到对只读变量的 `notify_set`，以“最近一次已发布的正确值”覆盖回 VarStore（若未知则 warn 并忽略）。
-
-### 2.2 模块职责
-
-- `core/metrics/metrics.go`：
-  - 新增 metric 常量；
-  - 增加“是否可控/是否只读”的判定（供校验/纠偏使用）。
-- `core/runtime/config.go`：
-  - 默认 bindings 与迁移逻辑升级（仅迁移旧默认，不覆盖自定义）；
-  - 维护平台默认（Windows 不包含手电；Android 包含手电）。
-- `core/runtime/varstore_inbound.go`：
-  - 新增 `flashlight_enabled` 下行路由（boolish 解析 → 控制动作）；
-  - 将只读纠偏从“仅 battery_percent”扩展到本轮新增的只读 metrics。
-- Windows：
-  - `core/metrics/collectors_windows.go`：新增 battery 状态、网络、CPU、内存采集 loop。
+- 新增声明式配置 key：`metrics.settings_json`，作为 MetricsNode 的“能力配置快照”。
+- runtime 负责：校验、落盘、派生 `Bindings(仅 enabled)` 与 `WritableByMetric`，并触发配置变更通知。
+- Windows collectors：接收 `enabled(metric)` + `configChanged` 信号，disabled 时阻塞等待，不轮询、不做系统调用。
 - Android：
-  - `android/.../NodeService.kt`：新增网络/CPU/内存采集；新增手电状态采集与执行写入。
-  - `android/.../NodeBridge.kt`：新增 update 方法（仍采用可选反射策略，避免旧 AAR 运行期崩溃）。
-- Go ↔ Android（gomobile）：
-  - `nodemobile/nodemobile.go`：新增 `UpdateXxx(string)` 导出函数。
+  - `NodeService` 是唯一运行载体（连接/鉴权/上报 + 采集线程 + 下行执行）。
+  - UI 通过 Intent 触发四步操作；Stop 为 Stop All（StopReporting+Disconnect+停止服务）。
 
-### 2.3 数据/调用流
+### 2.2 配置存储形态（A）
 
-- 上行（Android）：
-  - `NodeService` → `bridge.updateFlashlightEnabled("1")` → `nodemobile.UpdateFlashlightEnabled("1")` → Go runtime → VarStore set
-- 下行（Android 手电）：
-  - `notify_set` → enqueue `ControlAction{metric:"flashlight_enabled",value:"1"}` → `NodeService` `DequeueActions()` → `CameraManager.setTorchMode(...)` → torch callback → 上报真实状态
-
-### 2.4 接口草案（值域）
-
-- `battery_charging`：`-1/0/1`
-- `battery_on_ac`：`-1/0/1`
-- `net_online`：`-1/0/1`
-- `net_type`：`-1/none/wifi/ethernet/cellular/unknown`
-- `cpu_percent`：`-1/0..100`
-- `mem_percent`：`-1/0..100`
-- `flashlight_enabled`：`-1/0/1`（可写）
-
-### 2.5 错误与安全
-
-- 权限/硬件不支持：
-  - 读取：上报 `-1`；
-  - 写入：记录 warn，不崩溃；随后上报真实状态或 `-1` 完成纠偏。
-- 只处理 owner 匹配的 notify_set（沿用既有逻辑）。
-
-### 2.6 性能与测试策略
-
-- Android：
-  - 网络：`ConnectivityManager` callback 优先；fallback 轮询（必要时）。
-  - 手电：`CameraManager.registerTorchCallback` 事件驱动。
-  - CPU：读取 `/proc/stat` delta（2s）。
-  - 内存：`ActivityManager.MemoryInfo`（2s）。
-- Windows：
-  - CPU：`GetSystemTimes` delta（2s）。
-  - 内存：`GlobalMemoryStatusEx`（2s）。
-  - 网络：`GetAdaptersAddresses`（5s；避免过密）。
-- 测试：
-  - Go：扩展 bindings 迁移单测 + varstore_inbound（只读纠偏 + 手电入队）单测。
-  - Android：`assembleDebug`；手工验证 torch 切换。
-
-### 2.7 可扩展性设计点
-
-- 指标均通过 bindings 可配置 var_name；
-- 只读/可控语义集中在 Go core（便于新增指标时统一处理纠偏与入队规则）。
+- key：`metrics.settings_json`
+- value 示例：
+  ```json
+  [
+    {"metric":"battery_percent","enabled":true,"var_name":"sys_battery_percent"},
+    {"metric":"volume_percent","enabled":true,"writable":true,"var_name":"sys_volume_percent"},
+    {"metric":"brightness_percent","enabled":false,"writable":true,"var_name":"sys_brightness_percent"}
+  ]
+  ```
 
 ---
 
@@ -187,57 +80,102 @@
 
 - 目标：worktree/分支正确，工作区干净。
 - 验收：`git status --porcelain` 为空。
+- 回滚点：无（仅检查）。
 
-### T1 - 新增 metrics 常量与只读/可控分类
+### T1 - Core：新增 settings_json + 允许空 bindings
 
-- 涉及文件：
-  - `core/metrics/metrics.go`
-- 验收：
-  - 新增常量：
-    - `battery_charging` / `battery_on_ac`
-    - `net_online` / `net_type`
-    - `cpu_percent` / `mem_percent`
-    - `flashlight_enabled`
-  - 新增分类辅助：可控（volume/mute/brightness/flashlight）与只读（battery*、net*、cpu/mem）。
-
-### T2 - 默认 bindings 与迁移升级
-
+- 目标：
+  - 引入 key：`metrics.settings_json`（单 JSON）；作为 canonical 配置。
+  - 允许全关（bindings 为空）。
+  - 兼容：保留 `metrics.bindings_json`（读/写都支持），与 settings_json 自动互转，避免配置分裂。
 - 涉及文件：
   - `core/runtime/config.go`
   - `core/runtime/config_test.go`
 - 验收：
-  - 旧默认 bindings 安全迁移（不覆盖用户自定义）：
-    - legacy → 加入新 P0 指标（以及 brightness/手电在对应平台默认内）。
-  - Windows 默认不包含手电；Android 默认包含手电。
+  - `config_set(metrics.settings_json)` 校验正确；enabled 全 false 可保存。
+  - `metrics.bindings_json="[]"` 生效为全关。
+  - 两 key 互转一致（settings → derived bindings；bindings → normalized settings）。
+- 测试点：settings 解析/校验、空 bindings、互转逻辑、迁移策略（旧 config 无 settings_json 时从 bindings_json 补齐）。
+- 回滚点：恢复旧 `metrics.bindings_json` 路径（不写 settings_json）。
 
-### T3 - Windows：新增采集（battery 状态/网络/CPU/内存）
+### T2 - Core：writable=false 下行拦截与纠偏
 
-- 涉及文件：
-  - `core/metrics/collectors_windows.go`
-- 验收：
-  - 按值域输出；异常时 `-1`；日志节流合理。
-
-### T4 - Go Core：只读纠偏 + flashlight 下行路由
-
+- 目标：对可控指标实现 `writable=false`：收到 `notify_set` 不执行控制，纠偏写回真实值。
 - 涉及文件：
   - `core/runtime/varstore_inbound.go`
   - `core/runtime/varstore_inbound_test.go`
 - 验收：
-  - 只读变量被 set 时会纠偏为当前正确值（未知则 warn）。
-  - `flashlight_enabled` 写入可入队控制动作。
+  - `writable=false` 时不会 enqueue 控制动作；可纠偏时会写回正确值。
+- 回滚点：移除 writable 校验（恢复默认可写）。
 
-### T5 - Android：采集 P0 指标 + 手电读写
+### T3 - Core：Windows collectors 按 enabled 停采集/轮询
 
+- 目标：Windows 上 disabled 指标不轮询、不做系统调用（阻塞等待 config change）。
+- 涉及文件：
+  - `core/metrics/collectors_windows.go`
+  - `core/metrics/collectors_other.go`（签名对齐）
+  - `core/runtime/runtime.go`（传入 enabled + configChanged）
+- 验收：enabled=false 时对应 loop 阻塞等待配置变化；enabled=true 时恢复采集。
+- 性能点：disabled 时不 wake-up；仅 config change 或 ctx.Done 唤醒。
+- 回滚点：恢复“始终轮询、仅不发布”的老模式。
+
+### T4 - Windows/Wails：后端暴露 supported metrics + settings_json get/set
+
+- 目标：Wails 前端可读取支持指标清单与 settings_json，并写回立即生效。
+- 涉及文件：
+  - `windows/app.go`
+  - `core/metrics/metrics.go`（新增 capability 列表/DTO，如需）
+  - `windows/frontend/wailsjs/*`（bindings 生成）
+- 验收：
+  - Windows 不返回 Android-only 能力（如 flashlight）。
+  - settings_json 的 get/set 可用。
+- 回滚点：仅保留旧连接页功能（不提供设置页）。
+
+### T5 - Windows/Wails：前端两页 UI（连接页 + 设置页）
+
+- 目标：
+  - 两页切换（无需路由也可用 tab）。
+  - 设置页：列表配置 enabled/writable/var_name；数值实时显示；disabled 显示 `-`。
+  - `var_name` 保存策略：debounce 400ms + blur/回车立即提交；无效不提交并提示。
+- 涉及文件：
+  - `windows/frontend/src/App.vue`（拆分组件/视图）
+- 验收：
+  - 连接页：四步按钮与 Start/StopReporting 正常。
+  - 设置页：修改后自动保存并立即生效；全关可保存。
+- 回滚点：恢复单页 UI。
+
+### T6 - Android：nodemobile 导出分步接口 + config get/set
+
+- 目标：支持四步按钮调用；并支持读写 `metrics.settings_json`。
+- 涉及文件：
+  - `nodemobile/nodemobile.go`
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeBridge.kt`
+- 验收：
+  - `Connect/Register/Login/StartReporting/StopAll`（或等价）可用；Status 正确更新。
+  - `RuntimeConfigGet/Set(metrics.settings_json)` 可用。
+- 回滚点：保留旧 `Start()` 一键启动（兼容旧行为）。
+
+### T7 - Android：NodeService 按 settings 启停采集/轮询 + Stop All
+
+- 目标：
+  - enabled=false 必须停止对应采集/轮询（停止线程/receiver）。
+  - Stop All：停止上报、断开、停止前台服务并退出采集。
 - 涉及文件：
   - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
-  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeBridge.kt`
-  - `android/app/src/main/AndroidManifest.xml`（新增 `CAMERA`、`ACCESS_NETWORK_STATE`）
-  - `nodemobile/nodemobile.go`
 - 验收：
-  - 手电可读可写；不支持/读不到则 `-1`。
-  - 网络/CPU/内存/电源状态按值域上报。
+  - UI 改配置后立即生效；远端 `config_set` 改配置后 1s 内生效。
+  - Stop All 后通知栏消失，Status 变为未连接/未上报。
+- 回滚点：恢复“启动后全部采集一直跑”的模式。
 
-### T6 - 回归验证
+### T8 - Android：Compose UI 两页（连接页 + 设置页）
+
+- 目标：实现连接页四步按钮 + Stop All；设置页指标列表配置并实时显示。
+- 涉及文件：
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+- 验收：两页切换；配置 debounce 保存并生效；disabled 显示 `-`。
+- 回滚点：恢复原 Start/Stop Service 单页。
+
+### T9 - 回归验证
 
 - Go：`GOWORK=off go test ./... -count=1 -p 1`
 - Windows module：
@@ -245,8 +183,8 @@
   - `cd ..; GOWORK=off go test ./... -count=1 -p 1`
 - nodemobile：`cd nodemobile; GOWORK=off go test ./... -count=1 -p 1`
 - Android：`cd android; ./gradlew :app:assembleDebug`
+- 备注：worktree 下运行 Wails 如遇 go.work 冲突，使用 `GOWORK=off` 环境变量（例如 PowerShell：`$env:GOWORK='off'; wails dev`）。
 
-### T7 - Code Review（阶段 3.3）+ 归档（阶段 4）
+### T10 - Code Review（阶段 3.3）+ 归档（阶段 4）
 
-- 归档输出：
-  - `docs/change/2026-03-02_metricsnode-p0-metrics-flashlight.md`
+- 归档输出：`docs/change/2026-03-03_metricsnode-settings-ui.md`

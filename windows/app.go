@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"path/filepath"
@@ -295,4 +296,36 @@ func (a *App) StopReporting() {
 	if rt != nil {
 		rt.StopReporting()
 	}
+}
+
+func (a *App) MetricsSettingsGet() ([]runtime.MetricSetting, error) {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return nil, errors.New("runtime not initialized")
+	}
+	raw, ok := rt.RuntimeConfigGet(runtime.KeyMetricsSettingsJSON)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return []runtime.MetricSetting{}, nil
+	}
+	var out []runtime.MetricSetting
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (a *App) MetricsSettingsSet(settings []runtime.MetricSetting) error {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return errors.New("runtime not initialized")
+	}
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return err
+	}
+	return rt.RuntimeConfigSet(runtime.KeyMetricsSettingsJSON, string(encoded), 0)
 }

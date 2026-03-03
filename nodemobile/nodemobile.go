@@ -16,6 +16,7 @@ import (
 var (
 	mu      sync.Mutex
 	rt      *runtime.Runtime
+	rtDir   string
 	lastErr string
 )
 
@@ -31,9 +32,6 @@ type statusDTO struct {
 }
 
 func Start(addr, deviceID, workDir string) (string, error) {
-	mu.Lock()
-	defer mu.Unlock()
-
 	addr = strings.TrimSpace(addr)
 	deviceID = strings.TrimSpace(deviceID)
 	workDir = strings.TrimSpace(workDir)
@@ -47,50 +45,33 @@ func Start(addr, deviceID, workDir string) (string, error) {
 		return "", errors.New("workDir is required")
 	}
 
-	if rt == nil {
-		r, err := runtime.New(workDir, slog.Default())
-		if err != nil {
-			lastErr = err.Error()
-			return "", err
-		}
-		rt = r
-	}
-
-	if err := rt.Connect(addr); err != nil {
-		lastErr = err.Error()
+	if _, err := Init(workDir); err != nil {
 		return "", err
 	}
-
-	if _, err := rt.EnsureKeys(); err != nil {
-		lastErr = err.Error()
+	if _, err := Connect(addr); err != nil {
 		return "", err
 	}
-
-	auth := rt.AuthState()
+	if _, err := EnsureKeys(); err != nil {
+		return "", err
+	}
+	auth := StatusAuthSnapshot()
 	if auth.NodeID != 0 {
-		if _, err := rt.Login(deviceID, auth.NodeID); err != nil {
-			lastErr = err.Error()
+		if _, err := Login(deviceID, auth.NodeID); err != nil {
 			return "", err
 		}
 	} else {
-		if _, err := rt.Register(deviceID); err != nil {
-			lastErr = err.Error()
+		if _, err := Register(deviceID); err != nil {
 			return "", err
 		}
 	}
-
-	if err := rt.StartReporting(); err != nil {
-		lastErr = err.Error()
-		return "", err
-	}
-
-	return marshalStatus(rt), nil
+	return StartReporting()
 }
 
 func Stop() (string, error) {
 	mu.Lock()
 	r := rt
 	rt = nil
+	rtDir = ""
 	mu.Unlock()
 
 	if r == nil {
@@ -99,6 +80,231 @@ func Stop() (string, error) {
 	r.StopReporting()
 	r.Close()
 	return marshalStatus(nil), nil
+}
+
+func Init(workDir string) (string, error) {
+	workDir = strings.TrimSpace(workDir)
+	if workDir == "" {
+		return "", errors.New("workDir is required")
+	}
+
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+
+	if r == nil {
+		created, err := runtime.New(workDir, slog.Default())
+		if err != nil {
+			mu.Lock()
+			lastErr = err.Error()
+			mu.Unlock()
+			return "", err
+		}
+		mu.Lock()
+		rt = created
+		rtDir = workDir
+		r = created
+		mu.Unlock()
+	} else {
+		mu.Lock()
+		rtDir = workDir
+		mu.Unlock()
+	}
+
+	return marshalStatus(r), nil
+}
+
+func Connect(addr string) (string, error) {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return "", errors.New("addr is required")
+	}
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if err := r.Connect(addr); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func Disconnect() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return marshalStatus(nil), nil
+	}
+	r.Close()
+	return marshalStatus(r), nil
+}
+
+func EnsureKeys() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if _, err := r.EnsureKeys(); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func Register(deviceID string) (string, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return "", errors.New("device_id is required")
+	}
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if _, err := r.EnsureKeys(); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	if _, err := r.Register(deviceID); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func Login(deviceID string, nodeID uint32) (string, error) {
+	deviceID = strings.TrimSpace(deviceID)
+	if deviceID == "" {
+		return "", errors.New("device_id is required")
+	}
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if _, err := r.EnsureKeys(); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	if nodeID == 0 {
+		if st := r.AuthState(); st.NodeID != 0 {
+			nodeID = st.NodeID
+		}
+	}
+	if nodeID == 0 {
+		return "", errors.New("node_id is required")
+	}
+	if _, err := r.Login(deviceID, nodeID); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func StartReporting() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if err := r.StartReporting(); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func StopReporting() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return marshalStatus(nil), nil
+	}
+	r.StopReporting()
+	return marshalStatus(r), nil
+}
+
+func StopAll() (string, error) {
+	return Stop()
+}
+
+func RuntimeConfigGet(key string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", errors.New("key is required")
+	}
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if v, ok := r.RuntimeConfigGet(key); ok {
+		return v, nil
+	}
+	return "", errors.New("key not found")
+}
+
+func RuntimeConfigSet(key, value string) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", errors.New("key is required")
+	}
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if err := r.RuntimeConfigSet(key, value, 0); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func MetricsSettingsGet() (string, error) {
+	return RuntimeConfigGet(runtime.KeyMetricsSettingsJSON)
+}
+
+func MetricsSettingsSet(value string) (string, error) {
+	return RuntimeConfigSet(runtime.KeyMetricsSettingsJSON, value)
+}
+
+func StatusAuthSnapshot() runtime.AuthSnapshot {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return runtime.AuthSnapshot{}
+	}
+	return r.AuthState()
 }
 
 func Status() string {

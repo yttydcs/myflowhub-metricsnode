@@ -30,6 +30,14 @@ export function Login(arg1, arg2) {
   return window['go']['main']['App']['Login'](arg1, arg2);
 }
 
+export function MetricsSettingsGet() {
+  return window['go']['main']['App']['MetricsSettingsGet']();
+}
+
+export function MetricsSettingsSet(arg1) {
+  return window['go']['main']['App']['MetricsSettingsSet'](arg1);
+}
+
 export function Register(arg1) {
   return window['go']['main']['App']['Register'](arg1);
 }

@@ -59,21 +59,73 @@ var (
 	procGetMonitorBrightness                    = modDxva2.NewProc("GetMonitorBrightness")
 )
 
-func StartPlatformCollectors(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+type EnabledFunc func(metric string) bool
+type ConfigChangedFunc func() <-chan struct{}
+
+func anyMetricEnabled(enabled EnabledFunc, metrics ...string) bool {
+	if enabled == nil {
+		return true
+	}
+	for _, m := range metrics {
+		if enabled(m) {
+			return true
+		}
+	}
+	return false
+}
+
+func configChangedChan(configChanged ConfigChangedFunc) <-chan struct{} {
+	if configChanged == nil {
+		return nil
+	}
+	return configChanged()
+}
+
+func waitUntilEnabled(ctx context.Context, enabled EnabledFunc, configChanged ConfigChangedFunc, metrics ...string) bool {
+	if ctx == nil {
+		return false
+	}
+	if anyMetricEnabled(enabled, metrics...) {
+		return true
+	}
+	ch := configChangedChan(configChanged)
+	for !anyMetricEnabled(enabled, metrics...) {
+		if ch == nil {
+			select {
+			case <-ctx.Done():
+				return false
+			}
+		} else {
+			select {
+			case <-ctx.Done():
+				return false
+			case <-ch:
+			}
+		}
+		ch = configChangedChan(configChanged)
+	}
+	return true
+}
+
+func StartPlatformCollectors(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
 	if ctx == nil || emit == nil {
 		return
 	}
-	go batteryLoop(ctx, log, emit)
-	go volumeLoop(ctx, log, emit)
-	go brightnessLoop(ctx, log, emit)
-	go cpuLoop(ctx, log, emit)
-	go memLoop(ctx, log, emit)
-	go netLoop(ctx, log, emit)
+	go batteryLoop(ctx, log, emit, enabled, configChanged)
+	go volumeLoop(ctx, log, emit, enabled, configChanged)
+	go brightnessLoop(ctx, log, emit, enabled, configChanged)
+	go cpuLoop(ctx, log, emit, enabled, configChanged)
+	go memLoop(ctx, log, emit, enabled, configChanged)
+	go netLoop(ctx, log, emit, enabled, configChanged)
 }
 
-func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
-	ticker := time.NewTicker(defaultBatteryPollInterval)
-	defer ticker.Stop()
+func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	push := func() {
 		st, err := readSystemPowerStatus()
@@ -104,12 +156,30 @@ func batteryLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		emit(MetricBatteryCharging, acValue)
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricBatteryPercent, MetricBatteryOnAC, MetricBatteryCharging) {
+			return
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(defaultBatteryPollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricBatteryPercent, MetricBatteryOnAC, MetricBatteryCharging) {
+				ticker.Stop()
+				ticker = nil
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricBatteryPercent, MetricBatteryOnAC, MetricBatteryCharging) {
+				ticker.Stop()
+				ticker = nil
+				continue
+			}
 			push()
 		}
 	}
@@ -124,25 +194,39 @@ func (t fileTime) uint64() uint64 {
 	return (uint64(t.HighDateTime) << 32) | uint64(t.LowDateTime)
 }
 
-func cpuLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
-	ticker := time.NewTicker(defaultCPUPollInterval)
-	defer ticker.Stop()
+func cpuLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	var lastErrText string
 	var lastErrAt time.Time
 
-	prevIdle, prevKernel, prevUser, err := readSystemTimes()
-	havePrev := err == nil
-	if err != nil {
-		if log != nil {
-			log.Warn("read cpu failed", "err", err.Error())
+	var prevIdle, prevKernel, prevUser uint64
+	havePrev := false
+
+	initPrev := func() bool {
+		lastErrText = ""
+		lastErrAt = time.Time{}
+		idle, kernel, user, err := readSystemTimes()
+		if err != nil {
+			havePrev = false
+			if log != nil {
+				log.Warn("read cpu failed", "err", err.Error())
+			}
+			emit(MetricCPUPercent, "-1")
+			return true
 		}
-		emit(MetricCPUPercent, "-1")
-	} else {
+		prevIdle, prevKernel, prevUser = idle, kernel, user
+		havePrev = true
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-time.After(200 * time.Millisecond):
+			return true
 		}
 	}
 
@@ -198,12 +282,35 @@ func cpuLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		emit(MetricCPUPercent, fmt.Sprintf("%d", percent))
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricCPUPercent) {
+			return
+		}
+		if ticker == nil {
+			if ok := initPrev(); !ok {
+				return
+			}
+			ticker = time.NewTicker(defaultCPUPollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricCPUPercent) {
+				ticker.Stop()
+				ticker = nil
+				havePrev = false
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricCPUPercent) {
+				ticker.Stop()
+				ticker = nil
+				havePrev = false
+				continue
+			}
 			push()
 		}
 	}
@@ -221,9 +328,13 @@ type memoryStatusEx struct {
 	AvailExtendedVirtual uint64
 }
 
-func memLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
-	ticker := time.NewTicker(defaultMemPollInterval)
-	defer ticker.Stop()
+func memLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	var lastErrText string
 	var lastErrAt time.Time
@@ -257,20 +368,42 @@ func memLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		emit(MetricMemPercent, fmt.Sprintf("%d", percent))
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricMemPercent) {
+			return
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(defaultMemPollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricMemPercent) {
+				ticker.Stop()
+				ticker = nil
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricMemPercent) {
+				ticker.Stop()
+				ticker = nil
+				continue
+			}
 			push()
 		}
 	}
 }
 
-func netLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
-	ticker := time.NewTicker(defaultNetPollInterval)
-	defer ticker.Stop()
+func netLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	var lastErrText string
 	var lastErrAt time.Time
@@ -301,18 +434,36 @@ func netLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		emit(MetricNetType, netType)
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricNetOnline, MetricNetType) {
+			return
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(defaultNetPollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricNetOnline, MetricNetType) {
+				ticker.Stop()
+				ticker = nil
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricNetOnline, MetricNetType) {
+				ticker.Stop()
+				ticker = nil
+				continue
+			}
 			push()
 		}
 	}
 }
 
-func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
 	// COM must be initialized per-thread; keep all calls inside this goroutine.
 	goruntime.LockOSThread()
 	defer goruntime.UnlockOSThread()
@@ -333,8 +484,12 @@ func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 	}
 	defer release()
 
-	ticker := time.NewTicker(defaultVolumePollInterval)
-	defer ticker.Stop()
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	push := func() {
 		volPercent, muted, err := readEndpointVolume(endpoint)
@@ -352,12 +507,30 @@ func volumeLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		}
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricVolumePercent, MetricVolumeMuted) {
+			return
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(defaultVolumePollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricVolumePercent, MetricVolumeMuted) {
+				ticker.Stop()
+				ticker = nil
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricVolumePercent, MetricVolumeMuted) {
+				ticker.Stop()
+				ticker = nil
+				continue
+			}
 			push()
 		}
 	}
@@ -368,7 +541,7 @@ type physicalMonitor struct {
 	Desc   [128]uint16
 }
 
-func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
+func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc, enabled EnabledFunc, configChanged ConfigChangedFunc) {
 	// WMI relies on COM; keep WMI calls inside this goroutine and pinned to one OS thread.
 	goruntime.LockOSThread()
 	defer goruntime.UnlockOSThread()
@@ -390,8 +563,12 @@ func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		defer ole.CoUninitialize()
 	}
 
-	ticker := time.NewTicker(defaultBrightnessPollInterval)
-	defer ticker.Stop()
+	var ticker *time.Ticker
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
 
 	var lastErrText string
 	var lastErrAt time.Time
@@ -474,12 +651,30 @@ func brightnessLoop(ctx context.Context, log *slog.Logger, emit EmitFunc) {
 		emit(MetricBrightnessPercent, "-1")
 	}
 
-	push()
 	for {
+		if !waitUntilEnabled(ctx, enabled, configChanged, MetricBrightnessPercent) {
+			return
+		}
+		if ticker == nil {
+			ticker = time.NewTicker(defaultBrightnessPollInterval)
+			push()
+		}
+
+		ch := configChangedChan(configChanged)
 		select {
 		case <-ctx.Done():
 			return
+		case <-ch:
+			if !anyMetricEnabled(enabled, MetricBrightnessPercent) {
+				ticker.Stop()
+				ticker = nil
+			}
 		case <-ticker.C:
+			if !anyMetricEnabled(enabled, MetricBrightnessPercent) {
+				ticker.Stop()
+				ticker = nil
+				continue
+			}
 			push()
 		}
 	}

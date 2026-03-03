@@ -17,6 +17,10 @@ export function EnsureKeys():Promise<string>;
 
 export function Login(arg1:string,arg2:number):Promise<runtime.AuthSnapshot>;
 
+export function MetricsSettingsGet():Promise<Array<runtime.MetricSetting>>;
+
+export function MetricsSettingsSet(arg1:Array<runtime.MetricSetting>):Promise<void>;
+
 export function Register(arg1:string):Promise<runtime.AuthSnapshot>;
 
 export function StartReporting():Promise<void>;

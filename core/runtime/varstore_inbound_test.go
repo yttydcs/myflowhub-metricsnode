@@ -215,3 +215,34 @@ func TestHandleVarStoreNotifySet_ReadOnlyCorrectionUnavailable(t *testing.T) {
 		t.Fatalf("expected sys_net_type preserved, got %q", pv.Value)
 	}
 }
+
+func TestHandleVarStoreNotifySet_WritableFalseCorrection(t *testing.T) {
+	r := &Runtime{controlQ: newActionQueue()}
+	r.auth = AuthSnapshot{LoggedIn: true, NodeID: 7, HubID: 1}
+	r.cfg = runtimeConfig{
+		BindingByVarName: map[string]varBinding{
+			"sys_brightness_percent": {Metric: metrics.MetricBrightnessPercent, Writable: false},
+		},
+		VisibilityDefault: protovar.VisibilityPublic,
+	}
+	r.lastMetrics = map[string]string{metrics.MetricBrightnessPercent: "80"}
+	hdr := (&header.HeaderTcp{}).WithMajor(header.MajorMsg).WithSubProto(0).WithSourceID(1).WithTargetID(1)
+
+	r.handleVarStoreNotifySet(hdr, protovar.VarResp{
+		Name:       "sys_brightness_percent",
+		Value:      "32",
+		Owner:      7,
+		Visibility: protovar.VisibilityPublic,
+	})
+
+	if actions := r.DequeueActions(); len(actions) != 0 {
+		t.Fatalf("expected 0 actions, got %d", len(actions))
+	}
+
+	r.reportMu.Lock()
+	pv := r.lastPublished["sys_brightness_percent"]
+	r.reportMu.Unlock()
+	if pv.Value != "80" {
+		t.Fatalf("expected corrected sys_brightness_percent=80, got %q", pv.Value)
+	}
+}

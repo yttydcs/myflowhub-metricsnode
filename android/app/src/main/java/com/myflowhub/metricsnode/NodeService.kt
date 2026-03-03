@@ -38,6 +38,9 @@ class NodeService : Service() {
     private var running = false
 
     @Volatile
+    private var settingsRunning = false
+
+    @Volatile
     private var volumeRunning = false
 
     @Volatile
@@ -49,11 +52,21 @@ class NodeService : Service() {
     @Volatile
     private var systemRunning = false
 
+    @Volatile
+    private var cpuMetricEnabled = true
+
+    @Volatile
+    private var memMetricEnabled = true
+
+    @Volatile
+    private var netMetricEnabled = true
+
     private var batteryReceiver: BroadcastReceiver? = null
     private var volumeThread: Thread? = null
     private var controlThread: Thread? = null
     private var brightnessThread: Thread? = null
     private var systemThread: Thread? = null
+    private var settingsThread: Thread? = null
 
     private var cameraManager: CameraManager? = null
     private var torchCallback: CameraManager.TorchCallback? = null
@@ -66,6 +79,82 @@ class NodeService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
+            ACTION_CONNECT -> {
+                val addr = intent.getStringExtra(EXTRA_ADDR) ?: ""
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Connecting…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.connect(addr.trim())
+                    startForegroundWithState(
+                        when {
+                            st.reporting -> "Running"
+                            st.connected -> "Connected"
+                            else -> "Disconnected"
+                        }
+                    )
+                }.start()
+            }
+            ACTION_REGISTER -> {
+                val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+                var deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)?.trim().orEmpty()
+                if (deviceId.isBlank()) {
+                    deviceId = DeviceId.ensure(prefs, "android")
+                } else {
+                    prefs.edit().putString(DeviceId.PrefKey, deviceId).apply()
+                }
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Registering…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.register(deviceId)
+                    startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
+                }.start()
+            }
+            ACTION_LOGIN -> {
+                val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+                var deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)?.trim().orEmpty()
+                if (deviceId.isBlank()) {
+                    deviceId = DeviceId.ensure(prefs, "android")
+                } else {
+                    prefs.edit().putString(DeviceId.PrefKey, deviceId).apply()
+                }
+                val nodeId = intent.getLongExtra(EXTRA_NODE_ID, 0L)
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Logging in…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.login(deviceId, nodeId)
+                    startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
+                }.start()
+            }
+            ACTION_START_REPORTING -> {
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Starting reporting…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.startReporting()
+                    running = st.reporting
+                    if (running) {
+                        startObservers()
+                        startForegroundWithState("Running")
+                    } else {
+                        stopObservers()
+                        startForegroundWithState("Stopped")
+                    }
+                }.start()
+            }
+            ACTION_STOP_ALL -> {
+                stopObservers()
+                running = false
+                bridge.stopAll()
+                stopForeground(STOP_FOREGROUND_REMOVE)
+                stopSelf()
+            }
             ACTION_START -> {
                 val addr = intent.getStringExtra(EXTRA_ADDR) ?: ""
                 val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
@@ -80,9 +169,9 @@ class NodeService : Service() {
                 startForegroundWithState("Starting…")
                 Thread {
                     val st = bridge.start(NodeConfig(addr = addr, deviceId = deviceId, workDir = workDir))
-                    running = st.running
-                    startForegroundWithState(if (st.connected) "Running" else "Stopped")
-                    if (st.running) {
+                    running = st.reporting
+                    startForegroundWithState(if (st.connected && st.reporting) "Running" else "Stopped")
+                    if (st.reporting) {
                         startObservers()
                     }
                 }.start()
@@ -90,7 +179,7 @@ class NodeService : Service() {
             ACTION_STOP -> {
                 stopObservers()
                 running = false
-                bridge.stop()
+                bridge.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
@@ -109,21 +198,102 @@ class NodeService : Service() {
     fun getState(): NodeState = bridge.status()
 
     private fun startObservers() {
-        startBatteryObserver()
-        startVolumePoller()
-        startBrightnessPoller()
-        startSystemPoller()
-        startFlashlightObserver()
-        startControlPoller()
+        applyMetricSettingsFromRaw(bridge.metricsSettingsGet())
+        startSettingsWatcher()
     }
 
     private fun stopObservers() {
+        stopSettingsWatcher()
         stopBatteryObserver()
         stopVolumePoller()
         stopBrightnessPoller()
         stopSystemPoller()
         stopFlashlightObserver()
         stopControlPoller()
+    }
+
+    private fun startSettingsWatcher() {
+        if (settingsThread != null) {
+            return
+        }
+        settingsRunning = true
+        val t = Thread {
+            var lastRaw: String? = null
+            while (settingsRunning) {
+                if (!running) {
+                    Thread.sleep(200)
+                    continue
+                }
+                val raw = runCatching { bridge.metricsSettingsGet() }.getOrNull()?.trim().orEmpty()
+                if (raw.isNotBlank() && raw != lastRaw) {
+                    lastRaw = raw
+                    applyMetricSettingsFromRaw(raw)
+                }
+                Thread.sleep(1000)
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        settingsThread = t
+    }
+
+    private fun stopSettingsWatcher() {
+        settingsRunning = false
+        val t = settingsThread ?: return
+        settingsThread = null
+        runCatching { t.join(1200) }
+    }
+
+    private fun applyMetricSettingsFromRaw(raw: String) {
+        val list = MetricSettingJson.parseList(raw)
+        if (list.isNotEmpty()) {
+            applyMetricSettings(list)
+        } else {
+            applyMetricSettings(defaultAllEnabledSettings())
+        }
+    }
+
+    private fun defaultAllEnabledSettings(): List<MetricSetting> {
+        val v = "_"
+        return listOf(
+            MetricSetting(metric = "battery_percent", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "battery_charging", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "battery_on_ac", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "net_online", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "net_type", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "cpu_percent", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "mem_percent", varName = v, enabled = true, writable = false),
+            MetricSetting(metric = "volume_percent", varName = v, enabled = true, writable = true),
+            MetricSetting(metric = "volume_muted", varName = v, enabled = true, writable = true),
+            MetricSetting(metric = "brightness_percent", varName = v, enabled = true, writable = true),
+            MetricSetting(metric = "flashlight_enabled", varName = v, enabled = true, writable = true),
+        )
+    }
+
+    private fun applyMetricSettings(settings: List<MetricSetting>) {
+        cpuMetricEnabled = settings.any { it.enabled && it.metric == "cpu_percent" }
+        memMetricEnabled = settings.any { it.enabled && it.metric == "mem_percent" }
+        netMetricEnabled = settings.any { it.enabled && (it.metric == "net_online" || it.metric == "net_type") }
+
+        val batteryEnabled = settings.any { it.enabled && (it.metric == "battery_percent" || it.metric == "battery_charging" || it.metric == "battery_on_ac") }
+        if (batteryEnabled) startBatteryObserver() else stopBatteryObserver()
+
+        val volumeEnabled = settings.any { it.enabled && (it.metric == "volume_percent" || it.metric == "volume_muted") }
+        if (volumeEnabled) startVolumePoller() else stopVolumePoller()
+
+        val brightnessEnabled = settings.any { it.enabled && it.metric == "brightness_percent" }
+        if (brightnessEnabled) startBrightnessPoller() else stopBrightnessPoller()
+
+        val systemEnabled = settings.any { it.enabled && (it.metric == "cpu_percent" || it.metric == "mem_percent" || it.metric == "net_online" || it.metric == "net_type") }
+        if (systemEnabled) startSystemPoller() else stopSystemPoller()
+
+        val flashlightEnabled = settings.any { it.enabled && it.metric == "flashlight_enabled" }
+        if (flashlightEnabled) startFlashlightObserver() else stopFlashlightObserver()
+
+        val controlEnabled = settings.any {
+            it.enabled && it.writable && (it.metric == "volume_percent" || it.metric == "volume_muted" || it.metric == "brightness_percent" || it.metric == "flashlight_enabled")
+        }
+        if (controlEnabled) startControlPoller() else stopControlPoller()
     }
 
     private fun startBatteryObserver() {
@@ -245,18 +415,26 @@ class NodeService : Service() {
                     Thread.sleep(200)
                     continue
                 }
-                val cpu = cpuSampler.readPercent()
-                bridge.updateCPUPercent(cpu)
+                if (cpuMetricEnabled) {
+                    val cpu = cpuSampler.readPercent()
+                    bridge.updateCPUPercent(cpu)
+                }
 
-                val mem = readMemPercent(am)
-                bridge.updateMemPercent(mem)
+                if (memMetricEnabled) {
+                    val mem = readMemPercent(am)
+                    bridge.updateMemPercent(mem)
+                }
 
-                val now = System.currentTimeMillis()
-                if (now >= nextNetAt) {
-                    val (online, netType) = readNetStatus(cm)
-                    bridge.updateNetOnline(online)
-                    bridge.updateNetType(netType)
-                    nextNetAt = now + 5000
+                if (netMetricEnabled) {
+                    val now = System.currentTimeMillis()
+                    if (nextNetAt == 0L || now >= nextNetAt) {
+                        val (online, netType) = readNetStatus(cm)
+                        bridge.updateNetOnline(online)
+                        bridge.updateNetType(netType)
+                        nextNetAt = now + 5000
+                    }
+                } else {
+                    nextNetAt = 0L
                 }
 
                 Thread.sleep(2000)
@@ -547,11 +725,19 @@ class NodeService : Service() {
     }
 
     companion object {
+        const val ACTION_CONNECT = "com.myflowhub.metricsnode.action.CONNECT"
+        const val ACTION_REGISTER = "com.myflowhub.metricsnode.action.REGISTER"
+        const val ACTION_LOGIN = "com.myflowhub.metricsnode.action.LOGIN"
+        const val ACTION_START_REPORTING = "com.myflowhub.metricsnode.action.START_REPORTING"
+        const val ACTION_STOP_ALL = "com.myflowhub.metricsnode.action.STOP_ALL"
+
+        // Backward-compatible legacy actions.
         const val ACTION_START = "com.myflowhub.metricsnode.action.START"
         const val ACTION_STOP = "com.myflowhub.metricsnode.action.STOP"
 
         const val EXTRA_ADDR = "addr"
         const val EXTRA_DEVICE_ID = "device_id"
+        const val EXTRA_NODE_ID = "node_id"
 
         private const val CHANNEL_ID = "myflowhub_metricsnode"
         private const val NOTIFICATION_ID = 1

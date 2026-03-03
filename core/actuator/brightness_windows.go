@@ -34,12 +34,7 @@ var (
 )
 
 func SetPrimaryMonitorBrightnessPercent(percent int) error {
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 100 {
-		percent = 100
-	}
+	percent = clampBrightnessPercent(percent)
 
 	if err := setPrimaryMonitorBrightnessPercentDXVA2(percent); err == nil {
 		return nil
@@ -209,6 +204,7 @@ func setBrightnessPercentWMI(percent int) error {
 	}
 
 	called := false
+	var lastSetErr error
 	err = oleutil.ForEach(set, func(v *ole.VARIANT) error {
 		defer func() { _ = v.Clear() }()
 		item := v.ToIDispatch()
@@ -217,32 +213,63 @@ func setBrightnessPercentWMI(percent int) error {
 		}
 
 		// WmiSetBrightness(Timeout, BrightnessPercent)
-		// NOTE: Some WMI providers are picky about VARIANT types and will return DISP_E_TYPEMISMATCH
-		// when receiving VT_UI1/VT_UI4. Use VT_I4 (int32) by default for best compatibility, and
-		// keep the old unsigned call as a fallback.
-		res, err := oleutil.CallMethod(item, "WmiSetBrightness", int32(0), int32(percent))
-		if res != nil {
-			_ = res.Clear()
-		}
-		if err != nil {
-			res2, err2 := oleutil.CallMethod(item, "WmiSetBrightness", uint32(0), uint8(percent))
-			if res2 != nil {
-				_ = res2.Clear()
-			}
-			if err2 != nil {
-				return fmt.Errorf("wmi set brightness failed: %w; fallback: %w", err, err2)
-			}
+		if err := callWmiSetBrightness(item, percent); err != nil {
+			lastSetErr = err
+			return nil // try next instance
 		}
 		called = true
-		return errWMIFound
+		return errWMIFound // stop iteration
 	})
 	if err != nil && !errors.Is(err, errWMIFound) {
 		return err
 	}
 	if !called {
+		if lastSetErr != nil {
+			return lastSetErr
+		}
 		return errors.New("wmi brightness methods not found")
 	}
 	return nil
 }
 
 var errWMIFound = errors.New("wmi: found")
+
+func callWmiSetBrightness(item *ole.IDispatch, percent int) error {
+	if item == nil {
+		return errors.New("wmi item is nil")
+	}
+	percent = clampBrightnessPercent(percent)
+	attempts := [][2]interface{}{
+		{uint32(0), uint8(percent)}, // per WMI docs: (uint32 Timeout, uint8 Brightness)
+		{int32(0), int32(percent)},  // common fallback: VT_I4 args
+		{int32(0), uint8(percent)},  // mixed variants
+		{uint32(0), int32(percent)}, // mixed variants
+		{int(0), int(percent)},      // generic
+	}
+
+	var errs []error
+	for _, a := range attempts {
+		res, err := oleutil.CallMethod(item, "WmiSetBrightness", a[0], a[1])
+		if res != nil {
+			_ = res.Clear()
+		}
+		if err == nil {
+			return nil
+		}
+		errs = append(errs, err)
+	}
+	if len(errs) == 0 {
+		return errors.New("wmi set brightness failed")
+	}
+	return fmt.Errorf("wmi set brightness failed: %w", errors.Join(errs...))
+}
+
+func clampBrightnessPercent(percent int) int {
+	if percent < 0 {
+		return 0
+	}
+	if percent > 100 {
+		return 100
+	}
+	return percent
+}
