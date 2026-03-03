@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - fix/metricsnode-ci-android
     tags-ignore:
       - "**"
   pull_request:
