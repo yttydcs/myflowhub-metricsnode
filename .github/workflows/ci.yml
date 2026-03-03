@@ -1,0 +1,301 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+    tags-ignore:
+      - "**"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-windows-amd64:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            windows/go.sum
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: windows/frontend/package-lock.json
+
+      - name: Install Wails CLI
+        shell: pwsh
+        run: |
+          go install github.com/wailsapp/wails/v2/cmd/wails@v2.11.0
+          $goPath = (go env GOPATH)
+          Add-Content -Path $env:GITHUB_PATH -Value "$goPath\bin"
+          wails version
+
+      - name: Build (Windows amd64)
+        shell: pwsh
+        working-directory: windows
+        run: |
+          $env:GOWORK='off'
+          wails build -platform windows/amd64 -nopackage
+
+      - name: Verify output
+        shell: pwsh
+        run: |
+          $exe = "windows/build/bin/windows.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "Expected output not found: $exe"
+            if (Test-Path "windows/build/bin") {
+              Get-ChildItem -Recurse "windows/build/bin" | Format-Table -AutoSize
+            } else {
+              Write-Host "windows/build/bin does not exist"
+            }
+            exit 1
+          }
+
+      - name: Prepare artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          Copy-Item -LiteralPath "windows/build/bin/windows.exe" -Destination "artifacts/windows.exe" -Force
+
+      - name: Upload artifact (30 days)
+        uses: actions/upload-artifact@v4
+        with:
+          name: myflowhub-metricsnode_windows_amd64
+          path: artifacts/windows.exe
+          retention-days: 30
+          if-no-files-found: error
+
+  build-android-debug:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.7"
+          cache: true
+          cache-dependency-path: |
+            go.sum
+            nodemobile/go.sum
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager --install \
+            "platforms;android-26" \
+            "platforms;android-34" \
+            "build-tools;34.0.0" \
+            "ndk;26.1.10909125"
+          echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/26.1.10909125" >> "$GITHUB_ENV"
+          echo "ANDROID_HOME=${ANDROID_SDK_ROOT}" >> "$GITHUB_ENV"
+
+      - name: Setup Gradle cache
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Build AAR (gomobile)
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build_aar.sh
+
+      - name: Assemble debug APK
+        working-directory: android
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDebug --stacktrace --no-daemon --console=plain 2>&1 | tee gradle-debug.log
+
+      - name: Upload Gradle log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myflowhub-metricsnode_android-debug-log
+          if-no-files-found: error
+          path: android/gradle-debug.log
+
+      - name: Verify outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f android/app/build/outputs/apk/debug/app-debug.apk
+          test -f android/app/libs/myflowhub.aar
+
+      - name: Prepare artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp -f android/app/build/outputs/apk/debug/app-debug.apk artifacts/app-debug.apk
+          cp -f android/app/libs/myflowhub.aar artifacts/myflowhub.aar
+
+      - name: Upload artifacts (debug)
+        uses: actions/upload-artifact@v4
+        with:
+          name: myflowhub-metricsnode_android_debug
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            artifacts/app-debug.apk
+            artifacts/myflowhub.aar
+
+  publish-debug-latest:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - build-windows-amd64
+      - build-android-debug
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    concurrency:
+      group: myflowhub-metricsnode-debug-latest
+      cancel-in-progress: true
+
+    steps:
+      - name: Download artifacts (Windows)
+        uses: actions/download-artifact@v4
+        with:
+          name: myflowhub-metricsnode_windows_amd64
+          path: artifacts
+
+      - name: Download artifacts (Android)
+        uses: actions/download-artifact@v4
+        with:
+          name: myflowhub-metricsnode_android_debug
+          path: artifacts
+
+      - name: Publish debug-latest release (EXE + APK + AAR)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          repo="${GITHUB_REPOSITORY}"
+          tag="debug-latest"
+          sha="${GITHUB_SHA}"
+
+          if [[ ! -d "artifacts" ]]; then
+            echo "找不到 artifacts 目录（download-artifact 可能失败）" >&2
+            exit 1
+          fi
+
+          mapfile -t exe_candidates < <(find artifacts -type f -name 'windows.exe' -print)
+          if (( ${#exe_candidates[@]} != 1 )); then
+            echo "期望找到 1 个 windows.exe，但找到 ${#exe_candidates[@]} 个" >&2
+            if (( ${#exe_candidates[@]} > 0 )); then
+              printf '  - %s\n' "${exe_candidates[@]}" >&2
+            fi
+            echo "artifacts 目录结构：" >&2
+            ls -R artifacts >&2
+            exit 1
+          fi
+          exe_path="${exe_candidates[0]}"
+
+          mapfile -t apk_candidates < <(find artifacts -type f -name 'app-debug.apk' -print)
+          if (( ${#apk_candidates[@]} != 1 )); then
+            echo "期望找到 1 个 app-debug.apk，但找到 ${#apk_candidates[@]} 个" >&2
+            if (( ${#apk_candidates[@]} > 0 )); then
+              printf '  - %s\n' "${apk_candidates[@]}" >&2
+            fi
+            echo "artifacts 目录结构：" >&2
+            ls -R artifacts >&2
+            exit 1
+          fi
+          apk_path="${apk_candidates[0]}"
+
+          mapfile -t aar_candidates < <(find artifacts -type f -name 'myflowhub.aar' -print)
+          if (( ${#aar_candidates[@]} != 1 )); then
+            echo "期望找到 1 个 myflowhub.aar，但找到 ${#aar_candidates[@]} 个" >&2
+            if (( ${#aar_candidates[@]} > 0 )); then
+              printf '  - %s\n' "${aar_candidates[@]}" >&2
+            fi
+            echo "artifacts 目录结构：" >&2
+            ls -R artifacts >&2
+            exit 1
+          fi
+          aar_path="${aar_candidates[0]}"
+
+          # 让 debug-latest tag 永远指向最新 main commit（强制更新）
+          api_base="https://api.github.com"
+          auth_header="Authorization: token ${GH_TOKEN}"
+          accept_header="Accept: application/vnd.github+json"
+          version_header="X-GitHub-Api-Version: 2022-11-28"
+
+          ref_url="${api_base}/repos/${repo}/git/ref/tags/${tag}"
+          ref_status="$(curl -sS -o /dev/null -w '%{http_code}' -H "${auth_header}" -H "${accept_header}" -H "${version_header}" "${ref_url}")"
+          if [[ "${ref_status}" == "200" ]]; then
+            curl -sSf -X PATCH \
+              -H "${auth_header}" -H "${accept_header}" -H "${version_header}" \
+              "${api_base}/repos/${repo}/git/refs/tags/${tag}" \
+              -d "{\"sha\":\"${sha}\",\"force\":true}" \
+              >/dev/null
+          elif [[ "${ref_status}" == "404" ]]; then
+            curl -sSf -X POST \
+              -H "${auth_header}" -H "${accept_header}" -H "${version_header}" \
+              "${api_base}/repos/${repo}/git/refs" \
+              -d "{\"ref\":\"refs/tags/${tag}\",\"sha\":\"${sha}\"}" \
+              >/dev/null
+          else
+            echo "检查 tag ref 失败：HTTP ${ref_status} (${ref_url})" >&2
+            exit 1
+          fi
+
+          release_title="Debug (latest)"
+          run_url="${GITHUB_SERVER_URL}/${repo}/actions/runs/${GITHUB_RUN_ID}"
+          release_notes=$(printf "自动构建的 Debug 版本（main）\n\ncommit=%s\nrun=%s\n" "${sha}" "${run_url}")
+
+          if gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
+            gh release edit "${tag}" --repo "${repo}" --title "${release_title}" --notes "${release_notes}" --prerelease
+          else
+            gh release create "${tag}" --repo "${repo}" --title "${release_title}" --notes "${release_notes}" --prerelease
+          fi
+
+          gh release upload "${tag}" "${exe_path}" --repo "${repo}" --clobber
+          gh release upload "${tag}" "${apk_path}" --repo "${repo}" --clobber
+          gh release upload "${tag}" "${aar_path}" --repo "${repo}" --clobber
+
+          release_url="https://github.com/${repo}/releases/tag/${tag}"
+          exe_url="https://github.com/${repo}/releases/download/${tag}/windows.exe"
+          apk_url="https://github.com/${repo}/releases/download/${tag}/app-debug.apk"
+          aar_url="https://github.com/${repo}/releases/download/${tag}/myflowhub.aar"
+          {
+            echo "## Debug Assets"
+            echo ""
+            echo "- Release: ${release_url}"
+            echo "- Windows EXE: ${exe_url}"
+            echo "- Android APK: ${apk_url}"
+            echo "- Android AAR: ${aar_url}"
+            echo "- Commit: \`${sha}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
