@@ -368,52 +368,66 @@ onBeforeUnmount(() => {
       <button class="btn secondary" :disabled="busy" @click="refresh">Refresh</button>
     </nav>
 
-    <section v-if="page === 'connect'" class="card">
-      <h2>Connect</h2>
-      <div class="grid">
-        <label>
-          Hub Addr
-          <input v-model="form.addr" class="input" placeholder="127.0.0.1:9000" />
-        </label>
-        <label>
-          Device ID
-          <input v-model="form.deviceId" class="input" placeholder="device-001" />
-        </label>
-        <label>
-          Node ID (for login)
-          <input v-model.number="form.nodeId" class="input" type="number" min="0" />
-        </label>
-      </div>
+    <template v-if="page === 'connect'">
+      <section class="card">
+        <h2>Bootstrap</h2>
+        <div class="grid">
+          <label>
+            Hub Addr
+            <input v-model="form.addr" class="input" placeholder="127.0.0.1:9000" />
+          </label>
+          <label>
+            Device ID
+            <input v-model="form.deviceId" class="input" placeholder="device-001" />
+          </label>
+        </div>
 
-      <div class="row">
-        <button class="btn" :disabled="busy" @click="connect">1. Connect</button>
-        <button class="btn secondary" :disabled="busy" @click="disconnect">Disconnect</button>
-        <button class="btn secondary" :disabled="busy" @click="clearAuth">Clear Auth</button>
-      </div>
+        <div class="row">
+          <button class="btn" :disabled="busy" @click="connect">1. Connect</button>
+          <button class="btn secondary" :disabled="busy" @click="disconnect">Disconnect</button>
+        </div>
+      </section>
 
-      <div class="row">
-        <button class="btn" :disabled="busy || !status.connected" @click="register">2. Register</button>
-        <button class="btn" :disabled="busy || !status.connected" @click="login">3. Login</button>
-        <button class="btn" :disabled="busy || !canReport || status.reporting" @click="startReporting">
-          4. Start Reporting
-        </button>
-        <button class="btn secondary" :disabled="busy || !status.reporting" @click="stopReporting">Stop</button>
-      </div>
+      <section class="card">
+        <h2>Auth</h2>
+        <div class="grid auth-grid">
+          <label>
+            Node ID (for login)
+            <input v-model.number="form.nodeId" class="input" type="number" min="0" />
+          </label>
+        </div>
 
-      <div class="kv">
-        <div><span>Logged In</span><b>{{ loggedIn ? "Yes" : "No" }}</b></div>
-        <div><span>Node ID</span><b>{{ status.auth?.node_id ?? "-" }}</b></div>
-        <div><span>Hub ID</span><b>{{ status.auth?.hub_id ?? "-" }}</b></div>
-        <div><span>Role</span><b>{{ status.auth?.role ?? "-" }}</b></div>
-        <div><span>Last</span><b>{{ status.auth?.last_action ?? "-" }}</b></div>
-        <div class="wide"><span>Msg</span><b>{{ status.auth?.last_message ?? "-" }}</b></div>
-      </div>
-    </section>
+        <div class="row">
+          <button class="btn" :disabled="busy || !status.connected" @click="register">2. Register</button>
+          <button class="btn" :disabled="busy || !status.connected" @click="login">3. Login</button>
+          <button class="btn secondary" :disabled="busy" @click="clearAuth">Clear Auth</button>
+        </div>
+
+        <div class="kv">
+          <div><span>Logged In</span><b>{{ loggedIn ? "Yes" : "No" }}</b></div>
+          <div><span>Node ID</span><b>{{ status.auth?.node_id ?? "-" }}</b></div>
+          <div><span>Hub ID</span><b>{{ status.auth?.hub_id ?? "-" }}</b></div>
+          <div><span>Role</span><b>{{ status.auth?.role ?? "-" }}</b></div>
+          <div><span>Last</span><b>{{ status.auth?.last_action ?? "-" }}</b></div>
+          <div class="wide"><span>Msg</span><b>{{ status.auth?.last_message ?? "-" }}</b></div>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Reporting</h2>
+        <div class="row">
+          <button class="btn" :disabled="busy || !canReport || status.reporting" @click="startReporting">
+            4. Start Reporting
+          </button>
+          <button class="btn secondary" :disabled="busy || !status.reporting" @click="stopReporting">Stop</button>
+        </div>
+      </section>
+    </template>
 
     <section v-else class="card">
-      <div class="row between">
+      <div class="card-header">
         <h2>Metrics Settings</h2>
-        <div class="row">
+        <div class="row tight">
           <button class="btn secondary" :disabled="settingsBusy" @click="loadSettings">Reload</button>
           <div class="pill" :class="settingsSaving ? 'warn' : 'ok'">
             {{ settingsSaving ? "Saving..." : "Ready" }}
@@ -424,32 +438,13 @@ onBeforeUnmount(() => {
       <div class="table">
         <div class="thead">
           <div>Metric</div>
-          <div>Enabled</div>
-          <div>Writable</div>
           <div>Var Name</div>
           <div>Value</div>
+          <div class="col-toggle">Enabled</div>
+          <div class="col-toggle">Writable</div>
         </div>
         <div v-for="s in settings" :key="s.metric" class="tr">
           <div class="metric">{{ s.metric }}</div>
-          <div>
-            <input
-              type="checkbox"
-              :checked="s.enabled"
-              :disabled="settingsSaving"
-              @change="setMetricEnabled(s, ($event.target as HTMLInputElement).checked)"
-            />
-          </div>
-          <div>
-            <template v-if="isControllable(s.metric)">
-              <input
-                type="checkbox"
-                :checked="s.writable"
-                :disabled="settingsSaving"
-                @change="setMetricWritable(s, ($event.target as HTMLInputElement).checked)"
-              />
-            </template>
-            <template v-else>-</template>
-          </div>
           <div class="varcol">
             <input
               class="input"
@@ -463,6 +458,31 @@ onBeforeUnmount(() => {
             <div v-if="varNameError[s.metric]" class="hint">{{ varNameError[s.metric] }}</div>
           </div>
           <div><code>{{ metricValue(s) }}</code></div>
+          <div class="togglecell">
+            <label class="toggle">
+              <input
+                type="checkbox"
+                :checked="s.enabled"
+                :disabled="settingsSaving"
+                @change="setMetricEnabled(s, ($event.target as HTMLInputElement).checked)"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+          <div class="togglecell">
+            <template v-if="isControllable(s.metric)">
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  :checked="s.writable"
+                  :disabled="settingsSaving"
+                  @change="setMetricWritable(s, ($event.target as HTMLInputElement).checked)"
+                />
+                <span class="track"></span>
+              </label>
+            </template>
+            <template v-else>-</template>
+          </div>
         </div>
       </div>
     </section>
@@ -524,6 +544,16 @@ h2 {
   text-transform: uppercase;
   opacity: 0.9;
 }
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.card-header h2 {
+  margin: 0;
+}
 .tabs {
   display: flex;
   align-items: center;
@@ -550,6 +580,9 @@ h2 {
   gap: 12px;
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+.grid.auth-grid {
+  grid-template-columns: minmax(0, 360px);
+}
 label {
   display: grid;
   gap: 6px;
@@ -571,6 +604,9 @@ label {
   align-items: center;
   margin-top: 12px;
   flex-wrap: wrap;
+}
+.row.tight {
+  margin-top: 0;
 }
 .between {
   justify-content: space-between;
@@ -638,7 +674,7 @@ label {
 .thead,
 .tr {
   display: grid;
-  grid-template-columns: 220px 80px 80px 1fr 120px;
+  grid-template-columns: 220px 1fr 120px 90px 90px;
   gap: 10px;
   align-items: start;
 }
@@ -657,6 +693,11 @@ label {
   opacity: 0.95;
   word-break: break-word;
 }
+.col-toggle,
+.togglecell {
+  display: flex;
+  justify-content: flex-end;
+}
 .varcol {
   display: grid;
   gap: 6px;
@@ -672,6 +713,56 @@ label {
 code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
     monospace;
+}
+.toggle {
+  --toggle-w: 38px;
+  --toggle-h: 20px;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle .track {
+  width: var(--toggle-w);
+  height: var(--toggle-h);
+  border-radius: var(--toggle-h);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.08);
+  position: relative;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.toggle .track::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: calc(var(--toggle-h) - 4px);
+  height: calc(var(--toggle-h) - 4px);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  transition: transform 120ms ease;
+}
+.toggle input:checked + .track {
+  background: rgba(16, 185, 129, 0.35);
+  border-color: rgba(16, 185, 129, 0.55);
+}
+.toggle input:checked + .track::after {
+  transform: translateX(calc(var(--toggle-w) - var(--toggle-h)));
+}
+.toggle input:disabled + .track {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.toggle input:focus-visible + .track {
+  outline: 2px solid rgba(255, 255, 255, 0.35);
+  outline-offset: 2px;
 }
 @media (max-width: 860px) {
   .grid {
