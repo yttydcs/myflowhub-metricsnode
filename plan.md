@@ -1,19 +1,21 @@
-# Plan - MyFlowHub-MetricsNode（CI：自动构建 Windows EXE + Android APK）
+# Plan - MyFlowHub-MetricsNode（CI：修复 Android 构建失败，确保 Win+Android 均可编译）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\chore-metricsnode-ci-build`  
-> 分支：`chore/metricsnode-ci-build`  
+> Worktree：`d:\project\MyFlowHub3\worktrees\fix-metricsnode-ci-android`  
+> 分支：`fix/metricsnode-ci-android`  
 > 日期：2026-03-03  
 >
-> 本 workflow 目标：为 `yttydcs/myflowhub-metricsnode` 添加 GitHub Actions，自动构建 Windows（Wails）可执行文件与 Android Debug APK，并在 main 分支 push 后发布 `debug-latest` 预发布版本提供直链下载。
+> 本 workflow 目标：修复 GitHub Actions 中 Android 构建失败的问题，并确保同一套 CI 能稳定产出 Windows EXE 与 Android APK；同时保持 `debug-latest` 直链发布可用。
 
 ---
 
 ## 0. 当前状态
 
 - 仓库已推送到 GitHub：`yttydcs/myflowhub-metricsnode`。
-- Windows：Wails App 位于 `windows/`（输出 `windows/build/bin/windows.exe`）。
-- Android：工程位于 `android/`；APK 构建依赖可选 gomobile AAR：`android/app/libs/myflowhub.aar`（脚本：`scripts/build_aar.sh`/`scripts/build_aar.ps1`）。
-- 当前仓库尚无 `.github/workflows/`。
+- CI 已存在：`.github/workflows/ci.yml`
+  - Windows：`wails build` 生成 `windows/build/bin/windows.exe`
+  - Android：`scripts/build_aar.sh` 生成 `android/app/libs/myflowhub.aar` + `./gradlew :app:assembleDebug` 生成 `app-debug.apk`
+  - main push：发布/更新 `debug-latest` 预发布 release（直链）
+- 现状问题：Android 构建在 GitHub Actions 上失败（需要修复并稳定化）。
 
 ---
 
@@ -21,9 +23,11 @@
 
 ### 1.1 目标
 
-1) Workflow 触发：`push(main)` + `pull_request` + `workflow_dispatch`。
-2) Android：构建 Debug APK（`assembleDebug`）。
-3) 发布：在 `main` push 后，自动更新/发布 `debug-latest` release，提供直链下载。
+1) 继续保持 `push(main)` / `pull_request(main)` / `workflow_dispatch` 触发。
+2) CI 必须稳定产出：
+   - Windows：`windows.exe`
+   - Android：`app-debug.apk`
+3) 发布：`push(main)` 后，`debug-latest` release 必须可用（至少包含 EXE+APK 的直链）。
 
 ### 1.2 不做
 
@@ -32,11 +36,11 @@
 
 ### 1.3 验收标准
 
-- CI 能成功生成并上传：
-  - Windows：`windows.exe`
-  - Android：`app-debug.apk`
-  -（附带）`myflowhub.aar`（用于启用真实 bridge，且便于复用/调试）
-- `debug-latest` release 中可直接下载上述产物（直链稳定）。
+- Actions 绿灯：Windows job 与 Android job 均成功。
+- `debug-latest` release 资产可下载：
+  - `windows.exe`
+  - `app-debug.apk`
+- `myflowhub.aar`：尽量生成并上传（若 gomobile 仍失败，不应阻断 APK/EXE 的发布；失败原因需要在日志中可定位）。
 
 ---
 
@@ -44,10 +48,11 @@
 
 ### 2.1 总体方案
 
-- 新增单一 workflow：`.github/workflows/ci.yml`
-  - `build-windows-amd64`（windows-latest）：安装 Go/Node/Wails → `cd windows; wails build -platform windows/amd64 -nopackage` → 上传 exe artifact
-  - `build-android-debug`（ubuntu-latest）：安装 JDK/Go/Android SDK+NDK → `bash scripts/build_aar.sh` → `cd android; ./gradlew :app:assembleDebug` → 上传 apk/aar artifact
-  - `publish-debug-latest`（ubuntu-latest）：仅 `push(main)` 运行；下载两份 artifact → 强制更新 tag `debug-latest` 指向本次 commit → 创建/更新预发布 release → 上传 exe/apk/aar（`--clobber`）并在 Summary 输出直链。
+- 在不改变现有功能目标的前提下，对 Android job 做“环境显式化 + 降低不确定性”：
+  - 固定 gomobile 版本（与 `nodemobile/go.mod` 的 `golang.org/x/mobile` 对齐），避免 `@latest` 漂移。
+  - 写入 `android/local.properties`（`sdk.dir` / `ndk.dir`），降低 Gradle/NDK 发现路径差异。
+  - NDK 环境变量兼容：同时设置 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`。
+  - 将 AAR 生成作为“强烈建议但不阻断 APK”的步骤：失败时保留日志，继续构建 APK；发布时 AAR 存在则上传，否则仅发布 EXE+APK。
 
 ### 2.2 依赖与缓存
 
@@ -64,19 +69,22 @@
 - 验收：`git status --porcelain` 为空。
 - 回滚点：无（仅检查）。
 
-### T1 - 新增 CI workflow（build jobs）
-- 目标：新增 `.github/workflows/ci.yml`，包含 Windows/Android 两个 build job，能成功产出 artifact。
+### T1 - 修复 Android CI 环境与 gomobile
+- 目标：让 Android job 在 GitHub Actions 上稳定构建 APK；AAR 失败不再阻断主流程，并输出可定位日志。
 - 涉及文件：
   - `.github/workflows/ci.yml`
-- 验收：GitHub Actions 运行成功；Artifacts 中存在 exe/apk/aar。
-- 回滚点：删除 workflow 文件。
+- 验收：Android job 成功；artifact 至少包含 `app-debug.apk`；AAR 若失败有清晰日志。
+- 回滚点：回滚 workflow 对 Android job 的改动。
 
-### T2 - 发布 debug-latest Release（直链）
-- 目标：main push 后自动发布/更新 `debug-latest` 预发布版本，并上传 exe/apk/aar 作为 release assets。
+### T2 - debug-latest 发布对齐（EXE/APK 必须，AAR 可选）
+- 目标：发布 job 不因 AAR 缺失而失败；EXE/APK 始终可发布。
 - 涉及文件：
   - `.github/workflows/ci.yml`
-- 验收：Release 页面存在 `debug-latest`，且 assets 可下载。
-- 回滚点：移除 publish job（保留 build jobs）。
+- 验收：`debug-latest` release 可下载 EXE+APK；AAR 存在则也可下载。
+- 回滚点：回滚 publish job 对 AAR 的“可选化”处理。
+
+### T3 - Code Review（阶段 3.3）+ 归档（阶段 4）
+- 归档输出：`docs/change/2026-03-03_metricsnode-ci-android-fix.md`
 
 ### T3 - 本地静态校验
 - 目标：确保 workflow 引用路径/输出路径正确（不必本机完整跑 CI）。
