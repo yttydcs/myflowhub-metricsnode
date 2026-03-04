@@ -1,21 +1,20 @@
-# Plan - MyFlowHub-MetricsNode（CI：修复 Android 构建失败，确保 Win+Android 均可编译）
+# Plan - MyFlowHub-MetricsNode（Android UI 对齐 Windows + 修复 debug-latest 点击无响应）
 
-> Worktree：`d:\project\MyFlowHub3\worktrees\fix-metricsnode-ci-android`  
-> 分支：`fix/metricsnode-ci-android`  
-> 日期：2026-03-03  
+> Worktree：`d:\project\MyFlowHub3\worktrees\fix-metricsnode-android-ui`  
+> 分支：`fix/metricsnode-android-ui`  
+> 日期：2026-03-04  
 >
-> 本 workflow 目标：修复 GitHub Actions 中 Android 构建失败的问题，并确保同一套 CI 能稳定产出 Windows EXE 与 Android APK；同时保持 `debug-latest` 直链发布可用。
+> 本 workflow 目标：让 Android 版 UI 与 Windows 版（Wails）在信息结构与交互上对齐，并修复 `debug-latest` APK 上「Connect 点击无反应 / Settings 仅有 Reload」的问题；同时 Windows 连接页按钮去掉 `1/2/3` 编号。
 
 ---
 
 ## 0. 当前状态
 
-- 仓库已推送到 GitHub：`yttydcs/myflowhub-metricsnode`。
-- CI 已存在：`.github/workflows/ci.yml`
-  - Windows：`wails build` 生成 `windows/build/bin/windows.exe`
-  - Android：`scripts/build_aar.sh` 生成 `android/app/libs/myflowhub.aar` + `./gradlew :app:assembleDebug` 生成 `app-debug.apk`
-  - main push：发布/更新 `debug-latest` 预发布 release（直链）
-- 现状问题：Android 构建在 GitHub Actions 上失败（需要修复并稳定化）。
+- `debug-latest` Android APK 现象：
+  - Connect 页面按钮点击后无明显状态变化
+  - Settings 页面仅显示 `Reload`
+- Windows：连接页按钮仍包含 `1. / 2. / 3.` 编号
+- 初步定位（基于 release 的 `myflowhub.aar` 内容检查）：AAR 仅包含 `arm64-v8a` 的 `libgojni.so`，在 **非 arm64 设备**（例如部分 Android 平板仍为 32-bit ARM：`armeabi-v7a`）或 **x86_64/x86 环境** 上会触发 `UnsatisfiedLinkError`，导致运行时 fallback 到 `StubNodeBridge`，从而出现 UI 无状态变化/Settings 空列表。
 
 ---
 
@@ -23,24 +22,26 @@
 
 ### 1.1 目标
 
-1) 继续保持 `push(main)` / `pull_request(main)` / `workflow_dispatch` 触发。
-2) CI 必须稳定产出：
-   - Windows：`windows.exe`
-   - Android：`app-debug.apk`
-3) 发布：`push(main)` 后，`debug-latest` release 必须可用（至少包含 EXE+APK 的直链）。
+1) Android：Connect / Settings 两页信息结构对齐 Windows 版：
+   - Connect：Bootstrap / Auth / Reporting 三块 + 状态展示（Connected/Reporting 等）
+   - Settings：表格化展示（Metric / Var Name / Value / Enabled / Writable）+ 顶部 `Reload + Ready`
+2) Android：`debug-latest` APK 上按钮点击必须有可见反馈（状态变化/错误提示），Settings 必须显示完整指标列表。
+3) Windows：连接页按钮去除 `1/2/3/4` 前缀。
+4) Win/Android：本地与 CI 均可成功编译。
 
 ### 1.2 不做
 
-- 不做 Android Release 签名（不引入 keystore/secrets）。
-- 不做 Windows 代码签名。
+- 不做市场/插件系统等扩展议题
+- 不引入签名、上架配置等发布流程改动
 
 ### 1.3 验收标准
 
-- Actions 绿灯：Windows job 与 Android job 均成功。
-- `debug-latest` release 资产可下载：
-  - `windows.exe`
-  - `app-debug.apk`
-- `myflowhub.aar`：尽量生成并上传（若 gomobile 仍失败，不应阻断 APK/EXE 的发布；失败原因需要在日志中可定位）。
+- Android（安装 `debug-latest`）：
+  - Connect 点击后，`Connected/Reporting/LastError` 至少一项可更新（有错误则展示错误）
+  - Settings 默认展示全量指标行，且可修改 Enabled/Writable/VarName 并自动保存生效
+  - 若运行在不支持的 ABI/缺少 AAR 的情况下，必须在 UI 明确提示（而非静默无反应）
+- Windows：Connect 页按钮文案无编号（`Connect/Register/Login/Start Reporting`）。
+- CI：Win + Android job 成功；`debug-latest` release 可下载 EXE/APK（AAR 仍尽量生成）。
 
 ---
 
@@ -48,17 +49,35 @@
 
 ### 2.1 总体方案
 
-- 在不改变现有功能目标的前提下，对 Android job 做“环境显式化 + 降低不确定性”：
-  - 固定 gomobile 版本（与 `nodemobile/go.mod` 的 `golang.org/x/mobile` 对齐），避免 `@latest` 漂移。
-  - 写入 `android/local.properties`（`sdk.dir` / `ndk.dir`），降低 Gradle/NDK 发现路径差异。
-  - NDK 环境变量兼容：同时设置 `ANDROID_NDK_HOME` / `ANDROID_NDK_ROOT`。
-  - 将 AAR 生成作为“强烈建议但不阻断 APK”的步骤：失败时保留日志，继续构建 APK；发布时 AAR 存在则上传，否则仅发布 EXE+APK。
+- **根因修复（兼容更多设备）**：将 gomobile AAR 的默认构建目标从单一 `android/arm64` 扩展为多 ABI（至少 `android/arm64,android/amd64`），从而让 x86_64 模拟器也能加载 Go runtime。
+- **可诊断性增强**：Android UI 显示当前 bridge 类型（Go/Stub）与加载失败原因（例如 `UnsatisfiedLinkError`），避免“按钮没反应”。
+- **UI 对齐**：Android 使用 Material3 + Compose，以 Windows 版的页面结构为蓝本实现两页布局与 Settings 表格布局。
 
-### 2.2 依赖与缓存
+### 2.2 模块职责
 
-- Go：`actions/setup-go` 启用缓存（依赖 `go.sum`、`windows/go.sum`、`nodemobile/go.sum`）。
-- Node：`actions/setup-node` 启用 npm 缓存（依赖 `windows/frontend/package-lock.json`）。
-- Android：使用 `android-actions/setup-android` + 安装固定 NDK 版本（降低 flaky）。
+- Android UI（Compose）：表单输入、触发 NodeService action、展示 NodeState/设置列表、即时保存配置。
+- NodeService：前台服务承载采集/轮询与执行（控制类指标），并通过 Go runtime 更新状态。
+- Go runtime（nodemobile/core）：真实连接/注册/登陆/上报、settings_json 持久化与校验。
+- 构建脚本（scripts/build_aar.*）：生成可被 Android app 引用的 AAR（含多 ABI 的 native libs）。
+
+### 2.3 数据/调用流（摘要）
+
+1) UI 点击 Connect/Register/Login/StartReporting → `startForegroundService` 发送 action → NodeService 调用 Go bridge 静态方法
+2) UI 每秒轮询 `bridge.status()` → 展示 Connected/Reporting/Auth/LastError/metrics snapshot
+3) Settings 页面：`metricsSettingsGet()` 拉取 settings_json → 编辑后 `metricsSettingsSet()` → NodeService watcher/poller 按设置启停
+
+### 2.4 错误与安全
+
+- Go bridge 加载失败（class/so 缺失、ABI 不匹配）必须暴露到 UI；不再静默降级。
+- Settings 保存仍依赖 Go runtime 的校验（重复 var_name/非法字符等）；UI 同时做轻量本地校验，减少无效请求。
+
+### 2.5 性能与测试策略
+
+- UI 轮询保持 1s（已有），避免更高频率消耗；Settings 保存做 400ms debounce。
+- 本地验证：
+  - Windows：`wails build`（`GOWORK=off`）
+  - Android：生成 AAR + `./gradlew :app:assembleDebug`
+- CI 验证：合并后观察 `ci` 与 `debug-latest` release 资产。
 
 ---
 
@@ -69,27 +88,42 @@
 - 验收：`git status --porcelain` 为空。
 - 回滚点：无（仅检查）。
 
-### T1 - 修复 Android CI 环境与 gomobile
-- 目标：让 Android job 在 GitHub Actions 上稳定构建 APK；AAR 失败不再阻断主流程，并输出可定位日志。
+### T1 - gomobile AAR 多 ABI（修复 debug-latest 运行时 stub）
+- 目标：默认生成包含多 ABI 的 `myflowhub.aar`，让 x86_64 模拟器/更多设备可加载 Go runtime。
 - 涉及文件：
-  - `.github/workflows/ci.yml`
-- 验收：Android job 成功；artifact 至少包含 `app-debug.apk`；AAR 若失败有清晰日志。
-- 回滚点：回滚 workflow 对 Android job 的改动。
+  - `scripts/build_aar.sh`
+  - `scripts/build_aar.ps1`
+- 验收：AAR 解包后至少包含：
+  - `jni/arm64-v8a/libgojni.so`
+  - `jni/armeabi-v7a/libgojni.so`
+  - `jni/x86_64/libgojni.so`
+  - `jni/x86/libgojni.so`
+- 测试点：本地运行脚本生成 AAR；（可选）安装 APK 在模拟器上验证 Go bridge 不再 fallback。
+- 回滚点：恢复默认 target 为 `android/arm64`。
 
-### T2 - debug-latest 发布对齐（EXE/APK 必须，AAR 可选）
-- 目标：发布 job 不因 AAR 缺失而失败；EXE/APK 始终可发布。
+### T2 - Android UI 对齐 Windows（Connect/Settings）
+- 目标：Android 两页布局与 Windows 结构一致；Settings 以表格形式展示全部指标并支持实时保存。
+- 涉及文件（预期）：
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`（拆分或重构 Compose）
+  - （如需要）新增 `android/app/src/main/java/com/myflowhub/metricsnode/ui/*.kt`
+- 验收：
+  - Connect：分块展示与按钮布局对齐，点击后状态/错误可见
+  - Settings：`Metric/VarName/Value/Enabled/Writable` 五列 + `Reload/Ready` 顶部对齐
+- 回滚点：回退 UI 改动文件。
+
+### T3 - Windows Connect 按钮去编号
+- 目标：移除 `1./2./3./4.` 前缀，保持逻辑不变。
 - 涉及文件：
-  - `.github/workflows/ci.yml`
-- 验收：`debug-latest` release 可下载 EXE+APK；AAR 存在则也可下载。
-- 回滚点：回滚 publish job 对 AAR 的“可选化”处理。
+  - `windows/frontend/src/App.vue`
+- 验收：按钮文字更新；功能不受影响。
+- 回滚点：回退该文件改动。
 
-### T3 - Code Review（阶段 3.3）+ 归档（阶段 4）
-- 归档输出：`docs/change/2026-03-03_metricsnode-ci-android-fix.md`
+### T4 - 编译验证（Win + Android）
+- 目标：确保本地可编译，且不破坏 CI。
+- 验收：
+  - Android：`assembleDebug` 成功
+  - Windows：`wails build` 成功
+- 回滚点：逐步回滚至最近可编译提交。
 
-### T3 - 本地静态校验
-- 目标：确保 workflow 引用路径/输出路径正确（不必本机完整跑 CI）。
-- 验收：`yamllint` 不强制；最少保证文件存在且路径与仓库一致。
-- 回滚点：无。
-
-### T4 - Code Review（阶段 3.3）+ 归档（阶段 4）
-- 归档输出：`docs/change/2026-03-03_metricsnode-ci-build.md`
+### T5 - Code Review（阶段 3.3）+ 归档（阶段 4）
+- 归档输出：`docs/change/2026-03-04_metricsnode-android-ui-align.md`
