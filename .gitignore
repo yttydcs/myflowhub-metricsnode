@@ -1,6 +1,7 @@
 # Go
 /bin/
 /dist/
+.tmp/
 *.exe
 *.dll
 *.so

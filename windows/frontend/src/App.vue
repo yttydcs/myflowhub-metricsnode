@@ -383,7 +383,7 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="row">
-          <button class="btn" :disabled="busy" @click="connect">1. Connect</button>
+          <button class="btn" :disabled="busy" @click="connect">Connect</button>
           <button class="btn secondary" :disabled="busy" @click="disconnect">Disconnect</button>
         </div>
       </section>
@@ -398,8 +398,8 @@ onBeforeUnmount(() => {
         </div>
 
         <div class="row">
-          <button class="btn" :disabled="busy || !status.connected" @click="register">2. Register</button>
-          <button class="btn" :disabled="busy || !status.connected" @click="login">3. Login</button>
+          <button class="btn" :disabled="busy || !status.connected" @click="register">Register</button>
+          <button class="btn" :disabled="busy || !status.connected" @click="login">Login</button>
           <button class="btn secondary" :disabled="busy" @click="clearAuth">Clear Auth</button>
         </div>
 
@@ -417,7 +417,7 @@ onBeforeUnmount(() => {
         <h2>Reporting</h2>
         <div class="row">
           <button class="btn" :disabled="busy || !canReport || status.reporting" @click="startReporting">
-            4. Start Reporting
+            Start Reporting
           </button>
           <button class="btn secondary" :disabled="busy || !status.reporting" @click="stopReporting">Stop</button>
         </div>

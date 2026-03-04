@@ -118,43 +118,40 @@ interface NodeBridge {
     fun dequeueActions(): List<NodeAction>
 }
 
-class StubNodeBridge : NodeBridge {
-    private var state = NodeState(running = false)
+class StubNodeBridge(
+    initError: String = "",
+) : NodeBridge {
+    private val err = initError.trim().ifBlank { "gomobile bridge unavailable" }
+    private var state = NodeState(running = false, lastError = err)
 
-    override fun init(workDir: String): NodeState = state
+    override fun init(workDir: String): NodeState {
+        state = state.copy(workDir = workDir.trim())
+        return state
+    }
 
-    override fun connect(addr: String): NodeState = state.copy(connected = true, addr = addr.trim())
+    override fun connect(addr: String): NodeState {
+        state = state.copy(addr = addr.trim())
+        return state
+    }
 
-    override fun disconnect(): NodeState = state.copy(connected = false)
+    override fun disconnect(): NodeState = state
 
     override fun register(deviceId: String): NodeState = state
 
     override fun login(deviceId: String, nodeId: Long): NodeState = state
 
-    override fun startReporting(): NodeState {
-        state = state.copy(reporting = true)
-        return state
-    }
+    override fun startReporting(): NodeState = state
 
-    override fun stopReporting(): NodeState {
-        state = state.copy(reporting = false)
-        return state
-    }
+    override fun stopReporting(): NodeState = state
 
-    override fun stopAll(): NodeState {
-        state = NodeState(running = false)
-        return state
-    }
+    override fun stopAll(): NodeState = state
 
     override fun start(config: NodeConfig): NodeState {
-        state = NodeState(running = true, connected = true, addr = config.addr, workDir = config.workDir, reporting = true)
+        state = state.copy(addr = config.addr.trim(), workDir = config.workDir.trim())
         return state
     }
 
-    override fun stop(): NodeState {
-        state = NodeState(running = false)
-        return state
-    }
+    override fun stop(): NodeState = state
 
     override fun status(): NodeState = state
 
@@ -222,7 +219,7 @@ class GoNodeBridge : NodeBridge {
         connectMethod = GoReflect.method(cls, "Connect", String::class.java)
         disconnectMethod = GoReflect.method(cls, "Disconnect")
         registerMethod = GoReflect.method(cls, "Register", String::class.java)
-        loginMethod = GoReflect.method(cls, "Login", String::class.java, Long::class.java)
+        loginMethod = GoReflect.method(cls, "Login", String::class.java, java.lang.Long.TYPE)
         startReportingMethod = GoReflect.method(cls, "StartReporting")
         stopReportingMethod = GoReflect.method(cls, "StopReporting")
         stopAllMethod = GoReflect.method(cls, "StopAll")

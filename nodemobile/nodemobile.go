@@ -56,7 +56,7 @@ func Start(addr, deviceID, workDir string) (string, error) {
 	}
 	auth := StatusAuthSnapshot()
 	if auth.NodeID != 0 {
-		if _, err := Login(deviceID, auth.NodeID); err != nil {
+		if _, err := Login(deviceID, int64(auth.NodeID)); err != nil {
 			return "", err
 		}
 	} else {
@@ -187,7 +187,7 @@ func Register(deviceID string) (string, error) {
 	return marshalStatus(r), nil
 }
 
-func Login(deviceID string, nodeID uint32) (string, error) {
+func Login(deviceID string, nodeID int64) (string, error) {
 	deviceID = strings.TrimSpace(deviceID)
 	if deviceID == "" {
 		return "", errors.New("device_id is required")
@@ -204,15 +204,23 @@ func Login(deviceID string, nodeID uint32) (string, error) {
 		mu.Unlock()
 		return "", err
 	}
+	if nodeID < 0 {
+		nodeID = 0
+	}
 	if nodeID == 0 {
 		if st := r.AuthState(); st.NodeID != 0 {
-			nodeID = st.NodeID
+			nodeID = int64(st.NodeID)
 		}
 	}
 	if nodeID == 0 {
 		return "", errors.New("node_id is required")
 	}
-	if _, err := r.Login(deviceID, nodeID); err != nil {
+	const maxUint32 = int64(^uint32(0))
+	if nodeID > maxUint32 {
+		return "", fmt.Errorf("node_id out of range: %d", nodeID)
+	}
+
+	if _, err := r.Login(deviceID, uint32(nodeID)); err != nil {
 		mu.Lock()
 		lastErr = err.Error()
 		mu.Unlock()

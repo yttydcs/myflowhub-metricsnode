@@ -30,8 +30,8 @@ import java.io.File
 class NodeService : Service() {
     private val bridge: NodeBridge = try {
         GoNodeBridge()
-    } catch (_: Throwable) {
-        StubNodeBridge()
+    } catch (t: Throwable) {
+        StubNodeBridge(t.message ?: t.toString())
     }
 
     @Volatile
@@ -96,6 +96,18 @@ class NodeService : Service() {
                     )
                 }.start()
             }
+            ACTION_DISCONNECT -> {
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Disconnecting…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.disconnect()
+                    running = st.reporting
+                    stopObservers()
+                    startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
+                }.start()
+            }
             ACTION_REGISTER -> {
                 val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
                 var deviceId = intent.getStringExtra(EXTRA_DEVICE_ID)?.trim().orEmpty()
@@ -145,6 +157,28 @@ class NodeService : Service() {
                     } else {
                         stopObservers()
                         startForegroundWithState("Stopped")
+                    }
+                }.start()
+            }
+            ACTION_STOP_REPORTING -> {
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Stopping reporting…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.stopReporting()
+                    running = st.reporting
+                    if (running) {
+                        startObservers()
+                        startForegroundWithState("Running")
+                    } else {
+                        stopObservers()
+                        startForegroundWithState(
+                            when {
+                                st.connected -> "Connected"
+                                else -> "Disconnected"
+                            }
+                        )
                     }
                 }.start()
             }
@@ -726,9 +760,11 @@ class NodeService : Service() {
 
     companion object {
         const val ACTION_CONNECT = "com.myflowhub.metricsnode.action.CONNECT"
+        const val ACTION_DISCONNECT = "com.myflowhub.metricsnode.action.DISCONNECT"
         const val ACTION_REGISTER = "com.myflowhub.metricsnode.action.REGISTER"
         const val ACTION_LOGIN = "com.myflowhub.metricsnode.action.LOGIN"
         const val ACTION_START_REPORTING = "com.myflowhub.metricsnode.action.START_REPORTING"
+        const val ACTION_STOP_REPORTING = "com.myflowhub.metricsnode.action.STOP_REPORTING"
         const val ACTION_STOP_ALL = "com.myflowhub.metricsnode.action.STOP_ALL"
 
         // Backward-compatible legacy actions.

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TARGET="${1:-android/arm64}"
+TARGET="${1:-android/arm64,android/arm,android/amd64,android/386}"
 JAVA_PKG="${2:-com.myflowhub.gomobile}"
 OUT_FILE="${3:-android/app/libs/myflowhub.aar}"
 ANDROID_API="${ANDROID_API:-26}"

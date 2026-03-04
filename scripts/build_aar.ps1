@@ -1,5 +1,5 @@
 param(
-  [string]$Target = 'android/arm64',
+  [string]$Target = 'android/arm64,android/arm,android/amd64,android/386',
   [string]$JavaPkg = 'com.myflowhub.gomobile',
   [string]$OutFile = 'android/app/libs/myflowhub.aar',
   [int]$AndroidApi = 26

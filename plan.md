@@ -14,7 +14,10 @@
   - Connect 页面按钮点击后无明显状态变化
   - Settings 页面仅显示 `Reload`
 - Windows：连接页按钮仍包含 `1. / 2. / 3.` 编号
-- 初步定位（基于 release 的 `myflowhub.aar` 内容检查）：AAR 仅包含 `arm64-v8a` 的 `libgojni.so`，在 **非 arm64 设备**（例如部分 Android 平板仍为 32-bit ARM：`armeabi-v7a`）或 **x86_64/x86 环境** 上会触发 `UnsatisfiedLinkError`，导致运行时 fallback 到 `StubNodeBridge`，从而出现 UI 无状态变化/Settings 空列表。
+- 根因定位（已复现）：
+  1) **gomobile 绑定缺失 `login(...)`**：当前 `nodemobile.Login(deviceID string, nodeID uint32)` 的 `uint32` 参数无法被 gomobile 导出，导致生成的 `com.myflowhub.gomobile.nodemobile.Nodemobile` **没有 `login` 方法**；而 Android 端 `GoNodeBridge` 构造时强制反射 `Login`，因此初始化必然失败 → 自动降级为 `StubNodeBridge` → Connect/Settings 全部“无反应”。
+  2) **AAR 单 ABI（arm64-v8a）**：即便修复 login 绑定，如果 AAR 仍只包含 `arm64-v8a` 的 `libgojni.so`，在 **非 arm64 设备**（`armeabi-v7a`）或 **x86_64/x86 环境** 上仍会触发 `UnsatisfiedLinkError` → 降级 stub。
+  3) **CI 允许 AAR 构建失败**：当前 workflow 的 AAR 步骤是 `continue-on-error: true`，会导致发布一个“可安装但只能 stub”的 `debug-latest` APK。
 
 ---
 
@@ -49,8 +52,10 @@
 
 ### 2.1 总体方案
 
-- **根因修复（兼容更多设备）**：将 gomobile AAR 的默认构建目标从单一 `android/arm64` 扩展为多 ABI（至少 `android/arm64,android/amd64`），从而让 x86_64 模拟器也能加载 Go runtime。
-- **可诊断性增强**：Android UI 显示当前 bridge 类型（Go/Stub）与加载失败原因（例如 `UnsatisfiedLinkError`），避免“按钮没反应”。
+- **根因修复（login 绑定缺失）**：将 `nodemobile.Login` 的签名改为 gomobile 可导出的类型（建议 `int64` → Java `long`），确保 AAR 生成 `login(...)`。
+- **兼容更多设备（多 ABI AAR）**：将 gomobile AAR 默认构建目标扩展为多 ABI（`android/arm64,android/arm,android/amd64,android/386`），覆盖 arm64/armv7/x86_64/x86。
+- **CI 保真（禁止 stub 发布）**：CI 中 AAR 构建失败直接失败；并校验 AAR 内必须包含四种 ABI 的 `libgojni.so`。
+- **可诊断性增强**：Android UI 显示当前 bridge 类型（Go/Stub）与加载失败原因（例如缺少方法/ABI 不匹配），避免“按钮没反应”。
 - **UI 对齐**：Android 使用 Material3 + Compose，以 Windows 版的页面结构为蓝本实现两页布局与 Settings 表格布局。
 
 ### 2.2 模块职责
@@ -88,20 +93,35 @@
 - 验收：`git status --porcelain` 为空。
 - 回滚点：无（仅检查）。
 
-### T1 - gomobile AAR 多 ABI（修复 debug-latest 运行时 stub）
-- 目标：默认生成包含多 ABI 的 `myflowhub.aar`，让 x86_64 模拟器/更多设备可加载 Go runtime。
+### T1 - 修复 gomobile Login 绑定缺失（阻断 stub 根因）
+- 目标：让 AAR 生成 `login(...)`，Android 端 `GoNodeBridge` 不再因反射 `Login` 失败而降级 stub。
+- 涉及文件：
+  - `nodemobile/nodemobile.go`（`Login` 签名与参数校验）
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeBridge.kt`（反射签名：primitive `long`）
+- 验收：
+  - 本地生成 AAR 后，`com.myflowhub.gomobile.nodemobile.Nodemobile` 包含 `login(String,long)`（或等价方法）。
+  - Android debug 运行时不再出现“底部全部 No 且无 LastError”的静默 stub。
+- 测试点：
+  - 本地执行 `scripts/build_aar.ps1` 生成 AAR，并检查生成类方法表（`javap` 或等效手段）。
+- 回滚点：恢复 `Login` 原签名（不建议，会回到不可用状态）。
+
+### T2 - gomobile AAR 多 ABI + CI 强制成功（覆盖更多设备）
+- 目标：默认生成包含多 ABI 的 `myflowhub.aar`，覆盖真机/模拟器；并确保 CI 不会发布 stub APK。
 - 涉及文件：
   - `scripts/build_aar.sh`
   - `scripts/build_aar.ps1`
+  - `.github/workflows/ci.yml`
 - 验收：AAR 解包后至少包含：
   - `jni/arm64-v8a/libgojni.so`
   - `jni/armeabi-v7a/libgojni.so`
   - `jni/x86_64/libgojni.so`
   - `jni/x86/libgojni.so`
-- 测试点：本地运行脚本生成 AAR；（可选）安装 APK 在模拟器上验证 Go bridge 不再 fallback。
+- 测试点：
+  - 本地运行脚本生成 AAR 并检查 ABI 目录齐全
+  - CI：Android job 必须生成 AAR，否则直接失败（不再 `continue-on-error`）
 - 回滚点：恢复默认 target 为 `android/arm64`。
 
-### T2 - Android UI 对齐 Windows（Connect/Settings）
+### T3 - Android UI 对齐 Windows（Connect/Settings）+ 明确错误展示
 - 目标：Android 两页布局与 Windows 结构一致；Settings 以表格形式展示全部指标并支持实时保存。
 - 涉及文件（预期）：
   - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`（拆分或重构 Compose）
@@ -111,19 +131,19 @@
   - Settings：`Metric/VarName/Value/Enabled/Writable` 五列 + `Reload/Ready` 顶部对齐
 - 回滚点：回退 UI 改动文件。
 
-### T3 - Windows Connect 按钮去编号
+### T4 - Windows Connect 按钮去编号
 - 目标：移除 `1./2./3./4.` 前缀，保持逻辑不变。
 - 涉及文件：
   - `windows/frontend/src/App.vue`
 - 验收：按钮文字更新；功能不受影响。
 - 回滚点：回退该文件改动。
 
-### T4 - 编译验证（Win + Android）
+### T5 - 编译验证（Win + Android）
 - 目标：确保本地可编译，且不破坏 CI。
 - 验收：
   - Android：`assembleDebug` 成功
   - Windows：`wails build` 成功
 - 回滚点：逐步回滚至最近可编译提交。
 
-### T5 - Code Review（阶段 3.3）+ 归档（阶段 4）
+### T6 - Code Review（阶段 3.3）+ 归档（阶段 4）
 - 归档输出：`docs/change/2026-03-04_metricsnode-android-ui-align.md`

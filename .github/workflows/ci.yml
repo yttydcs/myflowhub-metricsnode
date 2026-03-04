@@ -172,7 +172,6 @@ jobs:
           gomobile version || true
 
       - name: Build AAR (gomobile)
-        continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
@@ -208,11 +207,24 @@ jobs:
         run: |
           set -euo pipefail
           test -f android/app/build/outputs/apk/debug/app-debug.apk
-          if [[ -f android/app/libs/myflowhub.aar ]]; then
-            echo "AAR generated: android/app/libs/myflowhub.aar"
-          else
-            echo "WARN: AAR not generated, APK will use stub bridge"
-          fi
+          test -f android/app/libs/myflowhub.aar
+          echo "AAR generated: android/app/libs/myflowhub.aar"
+
+          echo "Verifying AAR ABI slices..."
+          required=(
+            "jni/arm64-v8a/libgojni.so"
+            "jni/armeabi-v7a/libgojni.so"
+            "jni/x86_64/libgojni.so"
+            "jni/x86/libgojni.so"
+          )
+          for p in "${required[@]}"; do
+            if ! unzip -Z1 android/app/libs/myflowhub.aar | grep -qx "${p}"; then
+              echo "::error::AAR missing ABI slice: ${p}"
+              echo "AAR entries (first 200):"
+              unzip -Z1 android/app/libs/myflowhub.aar | sed -n '1,200p'
+              exit 1
+            fi
+          done
 
       - name: Prepare artifacts
         shell: bash
@@ -220,9 +232,7 @@ jobs:
           set -euo pipefail
           mkdir -p artifacts
           cp -f android/app/build/outputs/apk/debug/app-debug.apk artifacts/app-debug.apk
-          if [[ -f android/app/libs/myflowhub.aar ]]; then
-            cp -f android/app/libs/myflowhub.aar artifacts/myflowhub.aar
-          fi
+          cp -f android/app/libs/myflowhub.aar artifacts/myflowhub.aar
 
       - name: Upload artifacts (debug)
         uses: actions/upload-artifact@v4
