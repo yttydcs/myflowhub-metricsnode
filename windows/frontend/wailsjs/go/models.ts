@@ -87,7 +87,6 @@ export namespace runtime {
 	        this.last_unix_time = source["last_unix_time"];
 	    }
 	}
-
 	export class MetricSetting {
 	    metric: string;
 	    var_name: string;
