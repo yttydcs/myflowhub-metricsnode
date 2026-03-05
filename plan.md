@@ -160,3 +160,16 @@
   - `docs/change/2026-03-05_metricsnode-android-settings-density.md`
   - `todo.md`
 - 构建验证：`android :app:assembleDebug` 成功（2026-03-05）
+
+---
+
+## 2026-03-05 Workflow 收敛记录（fix/metricsnode-android-settings-responsive）
+
+- 来源 worktree：`d:/project/MyFlowHub3/worktrees/fix-metricsnode-android-settings-responsive`
+- 对应计划文档：`todo.md`（已在主仓库保留）
+- 变更主题：Android Settings 页面响应式修复（根因修正，解决窄屏仅见复选框）
+- 关键交付：
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - `docs/change/2026-03-05_metricsnode-android-settings-responsive.md`
+  - `todo.md`
+- 构建验证：`android :app:assembleDebug` 成功（2026-03-05）
