@@ -79,3 +79,87 @@
 - 压缩交互尺寸会影响可点击热区；需在“紧凑”与“可操作性”之间平衡。
 - 仅做 UI 尺寸层改动，禁止引入计划外业务逻辑变更。
 - 若发现需新增需求（例如完全改为卡片折叠布局），必须先更新本 `todo.md` 再实施。
+
+---
+
+# Windows 构建脚本固化（2026-03-05）
+
+## 项目目标与当前状态
+
+- 目标：新增 `scripts/build-windows.ps1`，把 `GOWORK=off`、`wailsjs` 绑定清理、`wails generate module`、`wails build` 固化为一条可复用命令，降低 Windows 启动与前端构建中的绑定失配问题。
+- 当前状态：
+  - Windows 构建命令可手动执行，但依赖人工顺序，容易遗留旧 `wailsjs` 产物。
+  - 现有仓库仅有 `scripts/build_aar.ps1` / `scripts/build_aar.sh`，未提供 Windows 一键构建脚本。
+
+## 可执行任务清单（Checklist）
+
+- [x] W1 需求基线与接口定义
+  - 目标：明确脚本输入参数、默认行为和失败边界，避免引入不必要逻辑。
+  - 涉及模块/文件：
+    - `scripts/build-windows.ps1`（新建）
+    - `windows/`（构建目录，仅调用不改业务）
+  - 验收条件：
+    - 脚本参数与默认行为文档化（`WindowsDir`、是否跳过清理/生成、是否保留 `GOWORK`）。
+  - 测试点：
+    - 静态审阅脚本参数和路径拼接逻辑。
+  - 回滚点：
+    - 删除新增脚本即可完全回滚。
+
+- [x] W2 实现构建脚本
+  - 目标：在 PowerShell 中实现可重复构建流程，提供清晰日志与错误处理。
+  - 涉及模块/文件：
+    - `scripts/build-windows.ps1`
+  - 验收条件：
+    - 默认执行流程：清理 `windows/frontend/wailsjs/go` -> `wails generate module` -> `wails build`。
+    - 错误即停止并输出可定位信息。
+  - 测试点：
+    - 路径不存在、`wails` 未安装、外部命令失败时均有明确报错。
+  - 回滚点：
+    - 回退该脚本文件。
+
+- [x] W3 构建验证
+  - 目标：确认脚本在当前仓库可直接执行并产出 `windows.exe`。
+  - 涉及模块/文件：
+    - `scripts/build-windows.ps1`
+    - `windows/build/bin/windows.exe`（产物验证）
+  - 验收条件：
+    - 执行脚本成功且目标产物存在。
+  - 测试点：
+    - 本地运行 `powershell -File scripts/build-windows.ps1`。
+  - 回滚点：
+    - 若脚本不稳定，先回退 W2，再恢复手工构建流程。
+
+- [x] W4 Code Review（阶段 3.3）
+  - 目标：按门禁逐项审查需求覆盖、性能、可读性、扩展性、稳定性与测试。
+  - 涉及模块/文件：
+    - `scripts/build-windows.ps1`
+  - 验收条件：
+    - 七项审查均给出通过/不通过结论。
+  - 测试点：
+    - 结合代码与执行日志审阅。
+  - 回滚点：
+    - 不通过则返回 W2 修正。
+
+- [x] W5 归档变更（阶段 4）
+  - 目标：在 `docs/change/` 产出可审计交接文档。
+  - 涉及模块/文件：
+    - `docs/change/2026-03-05_metricsnode-windows-build-script.md`
+  - 验收条件：
+    - 文档包含背景、改动、任务映射、设计权衡、验证结果、风险与回滚。
+  - 测试点：
+    - 字段完整性检查。
+  - 回滚点：
+    - 修订文档直至完整。
+
+## 依赖关系
+
+- W2 依赖 W1。
+- W3 依赖 W2。
+- W4 依赖 W2/W3。
+- W5 依赖 W4 通过。
+
+## 风险与注意事项
+
+- 清理目录必须限定在 `windows/frontend/wailsjs/go`，避免误删非生成文件。
+- `GOWORK` 只在脚本进程内覆盖并恢复，防止影响调用者环境。
+- 禁止引入计划外业务代码改动；若需要新增功能（如 dev 模式启动），必须先更新本 `todo.md`。
