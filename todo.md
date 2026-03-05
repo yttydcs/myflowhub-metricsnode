@@ -430,3 +430,95 @@
 
 
 
+
+---
+
+# Android Settings 文案清理（2026-03-05）
+
+> Worktree: `d:\project\MyFlowHub3\repo\MyFlowHub-MetricsNode\worktrees\refactor-android-settings-label-cleanup`
+> Branch: `refactor/android-settings-label-cleanup`
+
+## 项目目标与当前状态
+
+- 目标：
+  - 移除 `Metric` 列中的 `Report only` 文案。
+  - 移除每行 `Var Name/var_name` 文案，避免重复标签噪声。
+- 当前状态：
+  - `Metric` 行目前通过 `CapabilityTag` 展示 `Control + Report` / `Report only`。
+  - 宽屏和窄屏每行均显示 `Var Name` 标签，输入框占位为 `var_name`。
+
+## 可执行任务清单（Checklist）
+
+- [x] C1 需求与方案确认（阶段 1/2）
+  - 目标：确认仅做 Android Settings UI 文案清理，不改数据语义。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 明确改动点与不改动边界。
+  - 测试点：
+    - 静态代码审阅。
+  - 回滚点：
+    - 无代码改动。
+
+- [x] C2 文案清理实现（阶段 3.2）
+  - 目标：
+    - 移除 `Report only` 显示。
+    - 移除每行 `Var Name` 标签和 `var_name` 占位文案。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 界面不再出现 `Report only`。
+    - 每行不再出现 `Var Name` 标签。
+    - 输入框占位不含 `var_name`。
+  - 测试点：
+    - 宽屏/窄屏两套布局静态检查。
+  - 回滚点：
+    - 回滚 `MainActivity.kt` 本次改动。
+
+- [x] C3 构建验证
+  - 目标：确保改动可编译。
+  - 涉及模块/文件：
+    - `android/` Gradle 工程
+  - 验收条件：
+    - `:app:assembleDebug` 成功。
+  - 测试点：
+    - 构建日志无错误。
+  - 回滚点：
+    - 构建异常时回退 C2。
+
+- [x] C4 Code Review（阶段 3.3）
+  - 目标：按门禁输出通过/不通过。
+  - 涉及模块/文件：
+    - `MainActivity.kt`
+    - `todo.md`
+  - 验收条件：
+    - 七项审查结论完整。
+  - 测试点：
+    - diff + 构建结果审查。
+  - 回滚点：
+    - 不通过返回 C2 修正。
+
+- [x] C5 归档变更（阶段 4）
+  - 目标：形成可审计文档。
+  - 涉及模块/文件：
+    - `docs/change/2026-03-05_android-settings-label-cleanup.md`
+  - 验收条件：
+    - 文档字段完整可交接。
+  - 测试点：
+    - 字段完整性检查。
+  - 回滚点：
+    - 文档修订直至完整。
+
+## 依赖关系
+
+- C2 依赖 C1。
+- C3 依赖 C2。
+- C4 依赖 C2、C3。
+- C5 依赖 C4 通过。
+
+## 风险与注意事项
+
+- 仅做文案和展示层清理，禁止改动 settings 存储字段与校验逻辑。
+- 避免影响宽/窄屏可读性，保持当前布局结构和交互行为。
+
+
