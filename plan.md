@@ -185,3 +185,16 @@
   - 保持 `writable/enabled` 字段语义与保存链路不变。
 - 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
 - 归档：`docs/change/2026-03-05_android-settings-writeable-enabled-switch.md`
+
+---
+
+## 2026-03-05 安卓 Settings 现代化与风格统一（refactor/android-settings-modern-ui）
+
+- 状态：已完成并通过构建验证。
+- 变更摘要：
+  - 仅重构 Android Settings UI，提升视觉层次、可读性、操作效率。
+  - 新增摘要统计区、保存进度反馈、容器化错误提示。
+  - 宽屏/窄屏行样式升级并保持 `Writeable -> Enabled` 顺序。
+  - 保持 `load/validate/scheduleSave/saveNow` 链路和字段语义不变。
+- 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
+- 归档：`docs/change/2026-03-05_android-settings-modernization.md`

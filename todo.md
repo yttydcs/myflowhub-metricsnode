@@ -339,3 +339,94 @@
 
 - `Writeable/Writable` 存在拼写差异：本次按用户要求展示 `Writeable`，内部字段仍保持 `writable`，避免协议变化。
 - 宽屏列宽若过窄可能导致开关拥挤，需同步调整列宽保持可用性。
+
+---
+
+# Android Settings 现代化与风格统一（2026-03-05）
+
+> Worktree: `d:\project\MyFlowHub3\repo\MyFlowHub-MetricsNode\worktrees\refactor-android-settings-modern-ui`
+> Branch: `refactor/android-settings-modern-ui`
+
+## 项目目标与当前状态
+
+- 目标：仅优化 Android `Settings` 页面，使其更现代、商务简洁，并与 `Connect` 页保持一致视觉语言。
+- 当前状态：
+  - 结构可用但层次较平，状态信息和编辑区域视觉区分不足。
+  - 宽窄屏布局可用，但“可读性 / 操作效率”仍有提升空间。
+
+## 可执行任务清单（Checklist）
+
+- [x] M1 需求与方案确认（阶段 1/2）
+  - 目标：确认本次只改 Android Settings UI，不变更数据语义和保存链路。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 需求、范围、验收标准、风险、方案与模块职责明确。
+  - 测试点：
+    - 代码路径静态审阅。
+  - 回滚点：
+    - 无代码改动，无需回滚。
+
+- [x] M2 Settings 页面视觉重构（阶段 3.2）
+  - 目标：提升视觉层次、可读性、操作效率，同时保持 Connect 风格一致。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 顶部状态与摘要信息更清晰（保存状态/统计信息）。
+    - 列表容器和行样式更现代（层次、间距、对齐优化）。
+    - 宽屏与窄屏均保持 `Writeable -> Enabled` 顺序。
+    - 不改变 `load/validate/scheduleSave/saveNow` 语义。
+  - 测试点：
+    - 手工检查空数据、错误提示、saving 状态、可写/不可写行展示。
+  - 回滚点：
+    - 回滚 `MainActivity.kt` 本次改动。
+
+- [x] M3 构建验证
+  - 目标：确认改动可编译。
+  - 涉及模块/文件：
+    - `android/` Gradle 工程
+  - 验收条件：
+    - `:app:assembleDebug` 成功。
+  - 测试点：
+    - Gradle 构建日志无错误。
+  - 回滚点：
+    - 构建异常时回退 M2 并重试。
+
+- [x] M4 Code Review（阶段 3.3）
+  - 目标：按门禁输出通过/不通过。
+  - 涉及模块/文件：
+    - `MainActivity.kt`
+    - `todo.md`
+  - 验收条件：
+    - 需求覆盖、架构合理性、性能、可读性、扩展性、稳定性/安全、测试覆盖给出结论。
+  - 测试点：
+    - 结合 diff 与构建结果审查。
+  - 回滚点：
+    - 不通过返回 M2 修正。
+
+- [x] M5 归档变更（阶段 4）
+  - 目标：形成可审计交接文档。
+  - 涉及模块/文件：
+    - `docs/change/2026-03-05_android-settings-modernization.md`
+  - 验收条件：
+    - 文档包含背景目标、变更明细、任务映射、关键权衡、验证结果、影响与回滚。
+  - 测试点：
+    - 字段完整性检查。
+  - 回滚点：
+    - 文档修订直至完整。
+
+## 依赖关系
+
+- M2 依赖 M1。
+- M3 依赖 M2。
+- M4 依赖 M2、M3。
+- M5 依赖 M4 通过。
+
+## 风险与注意事项
+
+- 仅允许 UI 层改动，禁止改动 settings 协议字段和 service 行为。
+- 视觉升级需克制，避免与 `Connect` 页面风格割裂。
+- 若出现计划外需求，必须先更新 `todo.md` 再实施。
+
+
+

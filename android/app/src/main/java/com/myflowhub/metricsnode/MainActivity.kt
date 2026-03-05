@@ -27,10 +27,12 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -398,6 +400,8 @@ private fun SettingsPage(
     var saveJob by remember { mutableStateOf<Job?>(null) }
 
     val controllable = remember { setOf("volume_percent", "volume_muted", "brightness_percent", "flashlight_enabled") }
+    val enabledCount = settings.count { it.enabled }
+    val writeableCount = settings.count { it.writable && controllable.contains(it.metric) }
 
     fun isVarNameValid(name: String): Boolean {
         val trimmed = name.trim()
@@ -454,83 +458,149 @@ private fun SettingsPage(
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Card {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    Text("Metrics Settings", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                    OutlinedButton(enabled = !saving, onClick = { load() }) { Text("Reload") }
+                    Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Metrics Settings", style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "Manage metric mapping and report controls.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     StatusPill(text = if (saving) "Saving…" else "Ready", ok = !saving, warn = saving)
                 }
 
+                BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+                    val compactSummary = maxWidth < 680.dp
+                    if (compactSummary) {
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                MetricSummaryChip("Total", settings.size.toString(), Modifier.weight(1f))
+                                MetricSummaryChip("Enabled", enabledCount.toString(), Modifier.weight(1f))
+                                MetricSummaryChip("Writeable", writeableCount.toString(), Modifier.weight(1f))
+                            }
+                            OutlinedButton(
+                                modifier = Modifier.fillMaxWidth(),
+                                enabled = !saving,
+                                onClick = { load() },
+                            ) { Text("Reload") }
+                        }
+                    } else {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            MetricSummaryChip("Total", settings.size.toString())
+                            MetricSummaryChip("Enabled", enabledCount.toString())
+                            MetricSummaryChip("Writeable", writeableCount.toString())
+                            Spacer(modifier = Modifier.weight(1f))
+                            OutlinedButton(enabled = !saving, onClick = { load() }) { Text("Reload") }
+                        }
+                    }
+                }
+
+                if (saving) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 4.dp),
+                    )
+                }
+
                 if (settingsError.isNotBlank()) {
-                    Text("Error: $settingsError", color = MaterialTheme.colorScheme.error)
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(10.dp),
+                        color = MaterialTheme.colorScheme.errorContainer,
+                    ) {
+                        Text(
+                            "Error: $settingsError",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
                 }
 
                 if (settings.isEmpty()) {
                     Text("No settings loaded.", style = MaterialTheme.typography.bodySmall)
                 } else {
                     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                        val wide = maxWidth >= 880.dp
-                        val columnArrangement = if (wide) Arrangement.spacedBy(0.dp) else Arrangement.spacedBy(8.dp)
-                        Column(
+                        val wide = maxWidth >= 920.dp
+                        Surface(
                             modifier = Modifier.fillMaxWidth(),
-                            verticalArrangement = columnArrangement,
+                            shape = RoundedCornerShape(14.dp),
+                            tonalElevation = 1.dp,
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                         ) {
-                            if (wide) {
-                                SettingsHeaderRow()
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                            }
-
-                            for (s in settings) {
-                                val valueText = if (!s.enabled) "-" else (state.metrics[s.metric]?.ifBlank { "-" } ?: "-")
-                                val onEnabledChange: (Boolean) -> Unit = { checked ->
-                                    settings = settings.map { if (it.metric == s.metric) it.copy(enabled = checked) else it }
-                                    scheduleSave()
-                                }
-                                val onWritableChange: (Boolean) -> Unit = { checked ->
-                                    settings = settings.map { if (it.metric == s.metric) it.copy(writable = checked) else it }
-                                    scheduleSave()
-                                }
-                                val onVarNameChange: (String) -> Unit = fun(v: String) {
-                                    val trimmed = v.trim()
-                                    settings = settings.map { if (it.metric == s.metric) it.copy(varName = v) else it }
-                                    if (!isVarNameValid(trimmed)) {
-                                        varNameErrors[s.metric] = "only A-Z a-z 0-9 _"
-                                        return
-                                    }
-                                    varNameErrors.remove(s.metric)
-                                    scheduleSave()
-                                }
-
+                            val listArrangement = if (wide) Arrangement.spacedBy(6.dp) else Arrangement.spacedBy(10.dp)
+                            Column(
+                                modifier = Modifier.fillMaxWidth().padding(10.dp),
+                                verticalArrangement = listArrangement,
+                            ) {
                                 if (wide) {
-                                    SettingsRow(
-                                        setting = s,
-                                        valueText = valueText,
-                                        saving = saving,
-                                        controllable = controllable,
-                                        varNameError = varNameErrors[s.metric],
-                                        onEnabledChange = onEnabledChange,
-                                        onWritableChange = onWritableChange,
-                                        onVarNameChange = onVarNameChange,
-                                    )
-                                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                                } else {
-                                    SettingsCompactRow(
-                                        setting = s,
-                                        valueText = valueText,
-                                        saving = saving,
-                                        controllable = controllable,
-                                        varNameError = varNameErrors[s.metric],
-                                        onEnabledChange = onEnabledChange,
-                                        onWritableChange = onWritableChange,
-                                        onVarNameChange = onVarNameChange,
-                                    )
+                                    SettingsHeaderRow()
+                                    HorizontalDivider()
+                                }
+
+                                for ((index, s) in settings.withIndex()) {
+                                    val isControllable = controllable.contains(s.metric)
+                                    val valueText = if (!s.enabled) "-" else (state.metrics[s.metric]?.ifBlank { "-" } ?: "-")
+                                    val onEnabledChange: (Boolean) -> Unit = { checked ->
+                                        settings = settings.map { if (it.metric == s.metric) it.copy(enabled = checked) else it }
+                                        scheduleSave()
+                                    }
+                                    val onWritableChange: (Boolean) -> Unit = { checked ->
+                                        settings = settings.map { if (it.metric == s.metric) it.copy(writable = checked) else it }
+                                        scheduleSave()
+                                    }
+                                    val onVarNameChange: (String) -> Unit = fun(v: String) {
+                                        val trimmed = v.trim()
+                                        settings = settings.map { if (it.metric == s.metric) it.copy(varName = v) else it }
+                                        if (!isVarNameValid(trimmed)) {
+                                            varNameErrors[s.metric] = "only A-Z a-z 0-9 _"
+                                            return
+                                        }
+                                        varNameErrors.remove(s.metric)
+                                        scheduleSave()
+                                    }
+
+                                    if (wide) {
+                                        SettingsRow(
+                                            setting = s,
+                                            valueText = valueText,
+                                            saving = saving,
+                                            isControllable = isControllable,
+                                            varNameError = varNameErrors[s.metric],
+                                            onEnabledChange = onEnabledChange,
+                                            onWritableChange = onWritableChange,
+                                            onVarNameChange = onVarNameChange,
+                                        )
+                                        if (index != settings.lastIndex) {
+                                            HorizontalDivider(modifier = Modifier.padding(vertical = 2.dp))
+                                        }
+                                    } else {
+                                        SettingsCompactRow(
+                                            setting = s,
+                                            valueText = valueText,
+                                            saving = saving,
+                                            isControllable = isControllable,
+                                            varNameError = varNameErrors[s.metric],
+                                            onEnabledChange = onEnabledChange,
+                                            onWritableChange = onWritableChange,
+                                            onVarNameChange = onVarNameChange,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -581,12 +651,16 @@ private fun KeyValueRow(key: String, value: String) {
 @Composable
 private fun SettingsHeaderRow() {
     val style = MaterialTheme.typography.labelSmall
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text("Metric", style = style, modifier = Modifier.weight(0.32f))
-        Text("Var Name", style = style, modifier = Modifier.weight(0.44f))
-        Text("Value", style = style, modifier = Modifier.weight(0.24f), fontFamily = FontFamily.Monospace)
-        Text("Writeable", style = style, modifier = Modifier.width(72.dp), textAlign = TextAlign.End)
-        Text("Enabled", style = style, modifier = Modifier.width(72.dp), textAlign = TextAlign.End)
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("Metric", style = style, modifier = Modifier.weight(0.34f), color = color)
+        Text("Var Name", style = style, modifier = Modifier.weight(0.38f), color = color)
+        Text("Value", style = style, modifier = Modifier.weight(0.28f), color = color, textAlign = TextAlign.Start)
+        Text("Writeable", style = style, modifier = Modifier.width(86.dp), color = color, textAlign = TextAlign.End)
+        Text("Enabled", style = style, modifier = Modifier.width(86.dp), color = color, textAlign = TextAlign.End)
     }
 }
 
@@ -595,53 +669,74 @@ private fun SettingsRow(
     setting: MetricSetting,
     valueText: String,
     saving: Boolean,
-    controllable: Set<String>,
+    isControllable: Boolean,
     varNameError: String?,
     onEnabledChange: (Boolean) -> Unit,
     onWritableChange: (Boolean) -> Unit,
     onVarNameChange: (String) -> Unit,
 ) {
-    Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(setting.metric, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.32f))
-
-        Column(modifier = Modifier.weight(0.44f)) {
-            CompactVarNameField(
-                modifier = Modifier.fillMaxWidth(),
-                value = setting.varName,
-                enabled = !saving,
-                isError = !varNameError.isNullOrBlank(),
-                onValueChange = onVarNameChange,
-            )
-            if (!varNameError.isNullOrBlank()) {
-                Text(varNameError, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
-            }
-        }
-
-        Text(
-            valueText,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(0.24f),
-            fontFamily = FontFamily.Monospace,
-        )
-
-        Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
-            if (controllable.contains(setting.metric)) {
-                CompactSwitch(
-                    checked = setting.writable,
-                    enabled = !saving,
-                    onCheckedChange = onWritableChange,
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Column(modifier = Modifier.weight(0.34f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    setting.metric,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
                 )
-            } else {
-                Text("-", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.End)
+                CapabilityTag(text = if (isControllable) "Control + Report" else "Report only")
             }
-        }
 
-        Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
-            CompactSwitch(
-                checked = setting.enabled,
-                enabled = !saving,
-                onCheckedChange = onEnabledChange,
-            )
+            Column(modifier = Modifier.weight(0.38f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    "Var Name",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colors.onSurfaceVariant,
+                )
+                CompactVarNameField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = setting.varName,
+                    enabled = !saving,
+                    isError = !varNameError.isNullOrBlank(),
+                    onValueChange = onVarNameChange,
+                )
+                if (!varNameError.isNullOrBlank()) {
+                    Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
+                }
+            }
+
+            Box(modifier = Modifier.weight(0.28f), contentAlignment = Alignment.CenterStart) {
+                MetricValuePill(valueText = valueText, enabled = setting.enabled)
+            }
+
+            Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
+                if (isControllable) {
+                    CompactSwitch(
+                        checked = setting.writable,
+                        enabled = !saving,
+                        onCheckedChange = onWritableChange,
+                    )
+                } else {
+                    CapabilityTag(text = "Read-only")
+                }
+            }
+
+            Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
+                CompactSwitch(
+                    checked = setting.enabled,
+                    enabled = !saving,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
         }
     }
 }
@@ -651,79 +746,159 @@ private fun SettingsCompactRow(
     setting: MetricSetting,
     valueText: String,
     saving: Boolean,
-    controllable: Set<String>,
+    isControllable: Boolean,
     varNameError: String?,
     onEnabledChange: (Boolean) -> Unit,
     onWritableChange: (Boolean) -> Unit,
     onVarNameChange: (String) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .border(1.dp, colors.outline.copy(alpha = 0.55f), RoundedCornerShape(10.dp))
-            .padding(10.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.6f)),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Column(
+            modifier = Modifier.padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                setting.metric,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                valueText,
-                style = MaterialTheme.typography.bodySmall,
-                fontFamily = FontFamily.Monospace,
-            )
-        }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text(
+                        setting.metric,
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontFamily = FontFamily.Monospace,
+                    )
+                    CapabilityTag(text = if (isControllable) "Control + Report" else "Report only")
+                }
+                MetricValuePill(valueText = valueText, enabled = setting.enabled)
+            }
 
-        CompactVarNameField(
-            modifier = Modifier.fillMaxWidth(),
-            value = setting.varName,
-            enabled = !saving,
-            isError = !varNameError.isNullOrBlank(),
-            onValueChange = onVarNameChange,
-        )
-
-        if (!varNameError.isNullOrBlank()) {
-            Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-        ) {
-            if (controllable.contains(setting.metric)) {
-                SettingToggle(
-                    modifier = Modifier.weight(1f),
-                    label = "Writeable",
-                    checked = setting.writable,
-                    enabled = !saving,
-                    onCheckedChange = onWritableChange,
-                )
-            } else {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(
-                    text = "Writeable: -",
-                    modifier = Modifier.weight(1f),
+                    "Var Name",
                     style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.End,
+                    color = colors.onSurfaceVariant,
+                )
+                CompactVarNameField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = setting.varName,
+                    enabled = !saving,
+                    isError = !varNameError.isNullOrBlank(),
+                    onValueChange = onVarNameChange,
                 )
             }
-            SettingToggle(
-                modifier = Modifier.weight(1f),
-                label = "Enabled",
-                checked = setting.enabled,
-                enabled = !saving,
-                onCheckedChange = onEnabledChange,
-            )
+
+            if (!varNameError.isNullOrBlank()) {
+                Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                if (isControllable) {
+                    SettingToggle(
+                        modifier = Modifier.weight(1f),
+                        label = "Writeable",
+                        checked = setting.writable,
+                        enabled = !saving,
+                        onCheckedChange = onWritableChange,
+                    )
+                } else {
+                    Surface(
+                        modifier = Modifier.weight(1f),
+                        shape = RoundedCornerShape(10.dp),
+                        color = colors.surfaceVariant.copy(alpha = 0.4f),
+                        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+                    ) {
+                        Text(
+                            text = "Writeable: Read-only",
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colors.onSurfaceVariant,
+                            textAlign = TextAlign.Start,
+                        )
+                    }
+                }
+                SettingToggle(
+                    modifier = Modifier.weight(1f),
+                    label = "Enabled",
+                    checked = setting.enabled,
+                    enabled = !saving,
+                    onCheckedChange = onEnabledChange,
+                )
+            }
         }
+    }
+}
+
+@Composable
+private fun MetricSummaryChip(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = colors.secondaryContainer.copy(alpha = 0.45f),
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.titleSmall)
+        }
+    }
+}
+
+@Composable
+private fun CapabilityTag(text: String) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = colors.tertiaryContainer.copy(alpha = 0.65f),
+    ) {
+        Text(
+            text = text,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+            style = MaterialTheme.typography.labelSmall,
+            color = colors.onTertiaryContainer,
+        )
+    }
+}
+
+@Composable
+private fun MetricValuePill(
+    valueText: String,
+    enabled: Boolean,
+) {
+    val colors = MaterialTheme.colorScheme
+    val isInactive = !enabled || valueText == "-"
+    val container = if (isInactive) colors.surfaceVariant.copy(alpha = 0.45f) else colors.primaryContainer.copy(alpha = 0.75f)
+    val content = if (isInactive) colors.onSurfaceVariant else colors.onPrimaryContainer
+    Surface(
+        shape = RoundedCornerShape(999.dp),
+        color = container,
+    ) {
+        Text(
+            text = valueText,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            style = MaterialTheme.typography.labelMedium,
+            color = content,
+            fontFamily = FontFamily.Monospace,
+        )
     }
 }
 
@@ -735,17 +910,25 @@ private fun SettingToggle(
     onCheckedChange: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    Row(
-        modifier = modifier.heightIn(min = 28.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(10.dp),
+        color = colors.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
     ) {
-        Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-        CompactSwitch(
-            checked = checked,
-            enabled = enabled,
-            onCheckedChange = onCheckedChange,
-        )
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
+            CompactSwitch(
+                checked = checked,
+                enabled = enabled,
+                onCheckedChange = onCheckedChange,
+            )
+        }
     }
 }
 
@@ -779,6 +962,16 @@ private fun CompactVarNameField(
             onValueChange = onValueChange,
             textStyle = MaterialTheme.typography.bodySmall.copy(color = textColor),
             cursorBrush = SolidColor(colors.primary),
+            decorationBox = { innerTextField ->
+                if (value.isBlank()) {
+                    Text(
+                        text = "var_name",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colors.onSurfaceVariant.copy(alpha = 0.65f),
+                    )
+                }
+                innerTextField()
+            },
             modifier = Modifier.fillMaxWidth(),
         )
     }
