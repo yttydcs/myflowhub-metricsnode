@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -29,12 +30,12 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -451,14 +452,14 @@ private fun SettingsPage(
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Card {
-            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text("Metrics Settings", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
                     OutlinedButton(enabled = !saving, onClick = { load() }) { Text("Reload") }
@@ -474,9 +475,9 @@ private fun SettingsPage(
                 } else {
                     val hScroll = rememberScrollState()
                     Column(modifier = Modifier.fillMaxWidth().horizontalScroll(hScroll)) {
-                        Column(modifier = Modifier.widthIn(min = 920.dp)) {
+                        Column(modifier = Modifier.widthIn(min = 860.dp)) {
                             SettingsHeaderRow()
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
 
                             for (s in settings) {
                                 val valueText = if (!s.enabled) "-" else (state.metrics[s.metric]?.ifBlank { "-" } ?: "-")
@@ -505,7 +506,7 @@ private fun SettingsPage(
                                         scheduleSave()
                                     },
                                 )
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
                             }
                         }
                     }
@@ -513,7 +514,7 @@ private fun SettingsPage(
             }
         }
 
-        Spacer(modifier = Modifier.size(12.dp))
+        Spacer(modifier = Modifier.size(8.dp))
     }
 }
 
@@ -559,8 +560,8 @@ private fun SettingsHeaderRow() {
         Text("Metric", style = style, modifier = Modifier.weight(0.32f))
         Text("Var Name", style = style, modifier = Modifier.weight(0.44f))
         Text("Value", style = style, modifier = Modifier.weight(0.24f), fontFamily = FontFamily.Monospace)
-        Text("Enabled", style = style, modifier = Modifier.width(90.dp), textAlign = TextAlign.End)
-        Text("Writable", style = style, modifier = Modifier.width(90.dp), textAlign = TextAlign.End)
+        Text("Enabled", style = style, modifier = Modifier.width(74.dp), textAlign = TextAlign.End)
+        Text("Writable", style = style, modifier = Modifier.width(74.dp), textAlign = TextAlign.End)
     }
 }
 
@@ -580,11 +581,12 @@ private fun SettingsRow(
 
         Column(modifier = Modifier.weight(0.44f)) {
             OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
                 value = setting.varName,
                 enabled = !saving,
                 singleLine = true,
                 isError = !varNameError.isNullOrBlank(),
+                textStyle = MaterialTheme.typography.bodySmall,
                 onValueChange = onVarNameChange,
             )
             if (!varNameError.isNullOrBlank()) {
@@ -599,17 +601,17 @@ private fun SettingsRow(
             fontFamily = FontFamily.Monospace,
         )
 
-        Box(modifier = Modifier.width(90.dp), contentAlignment = Alignment.CenterEnd) {
-            Switch(
+        Box(modifier = Modifier.width(74.dp), contentAlignment = Alignment.CenterEnd) {
+            Checkbox(
                 checked = setting.enabled,
                 enabled = !saving,
                 onCheckedChange = onEnabledChange,
             )
         }
 
-        Box(modifier = Modifier.width(90.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(modifier = Modifier.width(74.dp), contentAlignment = Alignment.CenterEnd) {
             if (controllable.contains(setting.metric)) {
-                Switch(
+                Checkbox(
                     checked = setting.writable,
                     enabled = !saving,
                     onCheckedChange = onWritableChange,
