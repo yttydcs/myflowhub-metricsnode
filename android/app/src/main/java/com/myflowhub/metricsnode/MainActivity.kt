@@ -25,12 +25,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,6 +52,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -475,9 +481,9 @@ private fun SettingsPage(
                 } else {
                     val hScroll = rememberScrollState()
                     Column(modifier = Modifier.fillMaxWidth().horizontalScroll(hScroll)) {
-                        Column(modifier = Modifier.widthIn(min = 860.dp)) {
+                        Column(modifier = Modifier.widthIn(min = 740.dp)) {
                             SettingsHeaderRow()
-                            HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                            HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
 
                             for (s in settings) {
                                 val valueText = if (!s.enabled) "-" else (state.metrics[s.metric]?.ifBlank { "-" } ?: "-")
@@ -506,7 +512,7 @@ private fun SettingsPage(
                                         scheduleSave()
                                     },
                                 )
-                                HorizontalDivider(modifier = Modifier.padding(vertical = 6.dp))
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
                             }
                         }
                     }
@@ -560,8 +566,8 @@ private fun SettingsHeaderRow() {
         Text("Metric", style = style, modifier = Modifier.weight(0.32f))
         Text("Var Name", style = style, modifier = Modifier.weight(0.44f))
         Text("Value", style = style, modifier = Modifier.weight(0.24f), fontFamily = FontFamily.Monospace)
-        Text("Enabled", style = style, modifier = Modifier.width(74.dp), textAlign = TextAlign.End)
-        Text("Writable", style = style, modifier = Modifier.width(74.dp), textAlign = TextAlign.End)
+        Text("Enabled", style = style, modifier = Modifier.width(58.dp), textAlign = TextAlign.End)
+        Text("Writable", style = style, modifier = Modifier.width(58.dp), textAlign = TextAlign.End)
     }
 }
 
@@ -580,13 +586,11 @@ private fun SettingsRow(
         Text(setting.metric, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.32f))
 
         Column(modifier = Modifier.weight(0.44f)) {
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+            CompactVarNameField(
+                modifier = Modifier.fillMaxWidth(),
                 value = setting.varName,
                 enabled = !saving,
-                singleLine = true,
                 isError = !varNameError.isNullOrBlank(),
-                textStyle = MaterialTheme.typography.bodySmall,
                 onValueChange = onVarNameChange,
             )
             if (!varNameError.isNullOrBlank()) {
@@ -601,17 +605,17 @@ private fun SettingsRow(
             fontFamily = FontFamily.Monospace,
         )
 
-        Box(modifier = Modifier.width(74.dp), contentAlignment = Alignment.CenterEnd) {
-            Checkbox(
+        Box(modifier = Modifier.width(58.dp), contentAlignment = Alignment.CenterEnd) {
+            CompactCheck(
                 checked = setting.enabled,
                 enabled = !saving,
                 onCheckedChange = onEnabledChange,
             )
         }
 
-        Box(modifier = Modifier.width(74.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(modifier = Modifier.width(58.dp), contentAlignment = Alignment.CenterEnd) {
             if (controllable.contains(setting.metric)) {
-                Checkbox(
+                CompactCheck(
                     checked = setting.writable,
                     enabled = !saving,
                     onCheckedChange = onWritableChange,
@@ -619,6 +623,80 @@ private fun SettingsRow(
             } else {
                 Text("-", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.End)
             }
+        }
+    }
+}
+
+@Composable
+private fun CompactVarNameField(
+    value: String,
+    enabled: Boolean,
+    isError: Boolean,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val colors = MaterialTheme.colorScheme
+    val borderColor = when {
+        isError -> colors.error
+        enabled -> colors.outline
+        else -> colors.outline.copy(alpha = 0.6f)
+    }
+    val textColor = if (enabled) colors.onSurface else colors.onSurfaceVariant
+    Box(
+        modifier = modifier
+            .heightIn(min = 34.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, borderColor, RoundedCornerShape(8.dp))
+            .padding(horizontal = 8.dp, vertical = 6.dp),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        BasicTextField(
+            value = value,
+            enabled = enabled,
+            singleLine = true,
+            onValueChange = onValueChange,
+            textStyle = MaterialTheme.typography.bodySmall.copy(color = textColor),
+            cursorBrush = SolidColor(colors.primary),
+            modifier = Modifier.fillMaxWidth(),
+        )
+    }
+}
+
+@Composable
+private fun CompactCheck(
+    checked: Boolean,
+    enabled: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val border = when {
+        !enabled -> colors.outline.copy(alpha = 0.5f)
+        checked -> colors.primary.copy(alpha = 0.9f)
+        else -> colors.outline
+    }
+    val container = when {
+        !enabled -> colors.surfaceVariant.copy(alpha = 0.35f)
+        checked -> colors.primaryContainer
+        else -> colors.surfaceVariant.copy(alpha = 0.65f)
+    }
+    val markColor = if (enabled) colors.onPrimaryContainer else colors.onSurfaceVariant.copy(alpha = 0.5f)
+
+    Box(
+        modifier = Modifier
+            .size(22.dp)
+            .clip(RoundedCornerShape(4.dp))
+            .background(container)
+            .border(1.dp, border, RoundedCornerShape(4.dp))
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Checkbox,
+                onValueChange = onCheckedChange,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
+        if (checked) {
+            Text("✓", style = MaterialTheme.typography.labelSmall, color = markColor, textAlign = TextAlign.Center)
         }
     }
 }
