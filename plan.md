@@ -147,3 +147,16 @@
 
 ### T6 - Code Review（阶段 3.3）+ 归档（阶段 4）
 - 归档输出：`docs/change/2026-03-04_metricsnode-android-ui-align.md`
+
+---
+
+## 2026-03-05 Workflow 收敛记录（fix/metricsnode-settings-density）
+
+- 来源 worktree：`d:/project/MyFlowHub3/worktrees/fix-metricsnode-settings-density`
+- 对应计划文档：`todo.md`（已在主仓库保留）
+- 变更主题：Android Settings 页面进一步紧凑化（仅 UI 尺寸层）
+- 关键交付：
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - `docs/change/2026-03-05_metricsnode-android-settings-density.md`
+  - `todo.md`
+- 构建验证：`android :app:assembleDebug` 成功（2026-03-05）
