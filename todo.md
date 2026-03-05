@@ -249,3 +249,93 @@
 - 响应式重构需保持原数据流与校验策略，避免引入计划外业务变化。
 - 若改动触及组件抽象边界过大，应优先采用单文件内最小可回滚方案。
 - 若需新增模式（例如平板专用表格分支），必须同步更新本清单。
+
+---
+
+# Android Settings 开关顺序与控件类型调整（2026-03-05）
+
+> Worktree: `d:\project\MyFlowHub3\repo\MyFlowHub-MetricsNode\worktrees\fix-android-settings-switch-order`
+> Branch: `fix/android-settings-switch-order`
+
+## 项目目标与当前状态
+
+- 目标：将 Android Settings 页面中的两个开关列顺序调整为 `Writeable` 在前、`Enabled` 在后，并将 checkbox 风格控件替换为开关（Switch）。
+- 当前状态：
+  - 宽屏表格头顺序为 `Enabled` 后 `Writable`。
+  - 宽屏行与窄屏行都使用 `CompactCheck`（checkbox 视觉与语义）。
+
+## 可执行任务清单（Checklist）
+
+- [x] T1 需求与架构确认
+  - 目标：确认变更仅限 Android Settings UI，不影响 settings 保存语义。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 明确改动点：Header、宽屏 Row、窄屏 Row、Toggle 组件。
+  - 测试点：
+    - 代码静态审阅。
+  - 回滚点：
+    - 无代码变更，不需要回滚。
+
+- [x] T2 UI 顺序与控件改造
+  - 目标：
+    - 顺序改为 `Writeable` -> `Enabled`。
+    - checkbox 替换为 Material3 `Switch`。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 宽屏表头顺序正确。
+    - 宽屏行第一列是 Writeable 开关，第二列是 Enabled 开关。
+    - 窄屏行 `SettingToggle` 顺序一致。
+    - `controllable` 不包含该 metric 时仍显示占位文本。
+  - 测试点：
+    - 编译检查（`android` 模块）。
+    - 手工检查 UI 顺序和开关行为。
+  - 回滚点：
+    - 回滚 `MainActivity.kt` 本次改动。
+
+- [x] T3 构建验证
+  - 目标：确保改动后 Android 可编译。
+  - 涉及模块/文件：
+    - `android/` Gradle 工程
+  - 验收条件：
+    - `:app:assembleDebug` 成功。
+  - 测试点：
+    - Gradle 构建日志无错误。
+  - 回滚点：
+    - 失败时回退 T2 后重试。
+
+- [x] T4 Code Review（3.3）
+  - 目标：按流程输出七项审查结论。
+  - 涉及模块/文件：
+    - `MainActivity.kt`
+    - `todo.md`
+  - 验收条件：
+    - 需求覆盖、架构、性能、可读性、扩展性、稳定性/安全、测试覆盖给出通过/不通过。
+  - 测试点：
+    - 结合代码 diff + 构建结果。
+  - 回滚点：
+    - 不通过则回到 T2 修正。
+
+- [x] T5 归档变更（4）
+  - 目标：形成可审计变更记录。
+  - 涉及模块/文件：
+    - `docs/change/2026-03-05_android-settings-writeable-enabled-switch.md`
+  - 验收条件：
+    - 文档包含背景目标、改动明细、任务映射、设计权衡、验证结果、回滚方案。
+  - 测试点：
+    - 文档字段完整且可交接。
+  - 回滚点：
+    - 文档修订直至满足要求。
+
+## 依赖关系
+
+- T2 依赖 T1。
+- T3 依赖 T2。
+- T4 依赖 T2、T3。
+- T5 依赖 T4 通过。
+
+## 风险与注意事项
+
+- `Writeable/Writable` 存在拼写差异：本次按用户要求展示 `Writeable`，内部字段仍保持 `writable`，避免协议变化。
+- 宽屏列宽若过窄可能导致开关拥挤，需同步调整列宽保持可用性。

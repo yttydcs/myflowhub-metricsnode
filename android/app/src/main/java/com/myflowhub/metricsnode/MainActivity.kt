@@ -23,11 +23,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -36,6 +34,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
@@ -52,7 +51,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -587,8 +585,8 @@ private fun SettingsHeaderRow() {
         Text("Metric", style = style, modifier = Modifier.weight(0.32f))
         Text("Var Name", style = style, modifier = Modifier.weight(0.44f))
         Text("Value", style = style, modifier = Modifier.weight(0.24f), fontFamily = FontFamily.Monospace)
-        Text("Enabled", style = style, modifier = Modifier.width(58.dp), textAlign = TextAlign.End)
-        Text("Writable", style = style, modifier = Modifier.width(58.dp), textAlign = TextAlign.End)
+        Text("Writeable", style = style, modifier = Modifier.width(72.dp), textAlign = TextAlign.End)
+        Text("Enabled", style = style, modifier = Modifier.width(72.dp), textAlign = TextAlign.End)
     }
 }
 
@@ -626,17 +624,9 @@ private fun SettingsRow(
             fontFamily = FontFamily.Monospace,
         )
 
-        Box(modifier = Modifier.width(58.dp), contentAlignment = Alignment.CenterEnd) {
-            CompactCheck(
-                checked = setting.enabled,
-                enabled = !saving,
-                onCheckedChange = onEnabledChange,
-            )
-        }
-
-        Box(modifier = Modifier.width(58.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
             if (controllable.contains(setting.metric)) {
-                CompactCheck(
+                CompactSwitch(
                     checked = setting.writable,
                     enabled = !saving,
                     onCheckedChange = onWritableChange,
@@ -644,6 +634,14 @@ private fun SettingsRow(
             } else {
                 Text("-", style = MaterialTheme.typography.bodySmall, textAlign = TextAlign.End)
             }
+        }
+
+        Box(modifier = Modifier.width(72.dp), contentAlignment = Alignment.CenterEnd) {
+            CompactSwitch(
+                checked = setting.enabled,
+                enabled = !saving,
+                onCheckedChange = onEnabledChange,
+            )
         }
     }
 }
@@ -702,6 +700,22 @@ private fun SettingsCompactRow(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+            if (controllable.contains(setting.metric)) {
+                SettingToggle(
+                    modifier = Modifier.weight(1f),
+                    label = "Writeable",
+                    checked = setting.writable,
+                    enabled = !saving,
+                    onCheckedChange = onWritableChange,
+                )
+            } else {
+                Text(
+                    text = "Writeable: -",
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.labelSmall,
+                    textAlign = TextAlign.End,
+                )
+            }
             SettingToggle(
                 modifier = Modifier.weight(1f),
                 label = "Enabled",
@@ -709,22 +723,6 @@ private fun SettingsCompactRow(
                 enabled = !saving,
                 onCheckedChange = onEnabledChange,
             )
-            if (controllable.contains(setting.metric)) {
-                SettingToggle(
-                    modifier = Modifier.weight(1f),
-                    label = "Writable",
-                    checked = setting.writable,
-                    enabled = !saving,
-                    onCheckedChange = onWritableChange,
-                )
-            } else {
-                Text(
-                    text = "Writable: -",
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.labelSmall,
-                    textAlign = TextAlign.End,
-                )
-            }
         }
     }
 }
@@ -743,7 +741,7 @@ private fun SettingToggle(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Text(label, style = MaterialTheme.typography.labelSmall, modifier = Modifier.weight(1f))
-        CompactCheck(
+        CompactSwitch(
             checked = checked,
             enabled = enabled,
             onCheckedChange = onCheckedChange,
@@ -787,40 +785,14 @@ private fun CompactVarNameField(
 }
 
 @Composable
-private fun CompactCheck(
+private fun CompactSwitch(
     checked: Boolean,
     enabled: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    val colors = MaterialTheme.colorScheme
-    val border = when {
-        !enabled -> colors.outline.copy(alpha = 0.5f)
-        checked -> colors.primary.copy(alpha = 0.9f)
-        else -> colors.outline
-    }
-    val container = when {
-        !enabled -> colors.surfaceVariant.copy(alpha = 0.35f)
-        checked -> colors.primaryContainer
-        else -> colors.surfaceVariant.copy(alpha = 0.65f)
-    }
-    val markColor = if (enabled) colors.onPrimaryContainer else colors.onSurfaceVariant.copy(alpha = 0.5f)
-
-    Box(
-        modifier = Modifier
-            .size(22.dp)
-            .clip(RoundedCornerShape(4.dp))
-            .background(container)
-            .border(1.dp, border, RoundedCornerShape(4.dp))
-            .toggleable(
-                value = checked,
-                enabled = enabled,
-                role = Role.Checkbox,
-                onValueChange = onCheckedChange,
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (checked) {
-            Text("✓", style = MaterialTheme.typography.labelSmall, color = markColor, textAlign = TextAlign.Center)
-        }
-    }
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+    )
 }
