@@ -420,9 +420,9 @@ private fun SettingsPage(
         val seen = HashSet<String>()
         for (s in settings) {
             val varName = s.varName.trim()
-            if (!isVarNameValid(varName)) return "invalid var_name for ${s.metric}"
+            if (!isVarNameValid(varName)) return "invalid mapping for ${s.metric}"
             if (s.enabled) {
-                if (!seen.add(varName)) return "duplicate enabled var_name: $varName"
+                if (!seen.add(varName)) return "duplicate enabled mapping: $varName"
             }
         }
         return null
@@ -657,7 +657,7 @@ private fun SettingsHeaderRow() {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text("Metric", style = style, modifier = Modifier.weight(0.34f), color = color)
-        Text("Var Name", style = style, modifier = Modifier.weight(0.38f), color = color)
+        Text("Mapping", style = style, modifier = Modifier.weight(0.38f), color = color)
         Text("Value", style = style, modifier = Modifier.weight(0.28f), color = color, textAlign = TextAlign.Start)
         Text("Writeable", style = style, modifier = Modifier.width(86.dp), color = color, textAlign = TextAlign.End)
         Text("Enabled", style = style, modifier = Modifier.width(86.dp), color = color, textAlign = TextAlign.End)
@@ -693,15 +693,12 @@ private fun SettingsRow(
                     style = MaterialTheme.typography.bodySmall,
                     fontFamily = FontFamily.Monospace,
                 )
-                CapabilityTag(text = if (isControllable) "Control + Report" else "Report only")
+                if (isControllable) {
+                    CapabilityTag(text = "Control")
+                }
             }
 
             Column(modifier = Modifier.weight(0.38f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Var Name",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                )
                 CompactVarNameField(
                     modifier = Modifier.fillMaxWidth(),
                     value = setting.varName,
@@ -774,17 +771,14 @@ private fun SettingsCompactRow(
                         style = MaterialTheme.typography.bodyMedium,
                         fontFamily = FontFamily.Monospace,
                     )
-                    CapabilityTag(text = if (isControllable) "Control + Report" else "Report only")
+                    if (isControllable) {
+                        CapabilityTag(text = "Control")
+                    }
                 }
                 MetricValuePill(valueText = valueText, enabled = setting.enabled)
             }
 
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    "Var Name",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = colors.onSurfaceVariant,
-                )
                 CompactVarNameField(
                     modifier = Modifier.fillMaxWidth(),
                     value = setting.varName,
@@ -962,16 +956,6 @@ private fun CompactVarNameField(
             onValueChange = onValueChange,
             textStyle = MaterialTheme.typography.bodySmall.copy(color = textColor),
             cursorBrush = SolidColor(colors.primary),
-            decorationBox = { innerTextField ->
-                if (value.isBlank()) {
-                    Text(
-                        text = "var_name",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colors.onSurfaceVariant.copy(alpha = 0.65f),
-                    )
-                }
-                innerTextField()
-            },
             modifier = Modifier.fillMaxWidth(),
         )
     }

@@ -198,3 +198,15 @@
   - 保持 `load/validate/scheduleSave/saveNow` 链路和字段语义不变。
 - 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
 - 归档：`docs/change/2026-03-05_android-settings-modernization.md`
+
+---
+
+## 2026-03-05 安卓 Settings 文案清理（refactor/android-settings-label-cleanup）
+
+- 状态：已完成并通过构建验证。
+- 变更摘要：
+  - 移除 Metric 列 `Report only` 文案，仅保留可控项 `Control` 标签。
+  - 移除每行 `Var Name` 标签与输入占位 `var_name`。
+  - 将相关错误文案中的 `var_name` 替换为 `mapping`。
+- 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
+- 归档：`docs/change/2026-03-05_android-settings-label-cleanup.md`
