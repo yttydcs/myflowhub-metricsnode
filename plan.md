@@ -173,3 +173,15 @@
   - `docs/change/2026-03-05_metricsnode-android-settings-responsive.md`
   - `todo.md`
 - 构建验证：`android :app:assembleDebug` 成功（2026-03-05）
+
+---
+
+## 2026-03-05 安卓 Settings 开关顺序与控件类型调整（fix/android-settings-switch-order）
+
+- 状态：已完成并通过构建验证。
+- 变更摘要：
+  - Settings 表头与行顺序调整为 `Writeable -> Enabled`。
+  - 将 checkbox 样式控件替换为 Material3 `Switch`。
+  - 保持 `writable/enabled` 字段语义与保存链路不变。
+- 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
+- 归档：`docs/change/2026-03-05_android-settings-writeable-enabled-switch.md`
