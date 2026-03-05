@@ -522,3 +522,94 @@
 - 避免影响宽/窄屏可读性，保持当前布局结构和交互行为。
 
 
+
+---
+
+# Android Settings 去除 Control 标签与项目外框（2026-03-05）
+
+> Worktree: `d:\project\MyFlowHub3\repo\MyFlowHub-MetricsNode\worktrees\refactor-android-settings-remove-control-and-item-frame`
+> Branch: `refactor/android-settings-remove-control-and-item-frame`
+
+## 项目目标与当前状态
+
+- 目标：
+  - 移除 `Metric` 列的 `Control` 标签。
+  - 移除每个设置项目外层圆角矩形边框。
+- 当前状态：
+  - `SettingsRow` 与 `SettingsCompactRow` 在 metric 区域显示 `Control`。
+  - `SettingsRow` 与 `SettingsCompactRow` 顶层均使用圆角 `Surface + BorderStroke` 外框。
+
+## 可执行任务清单（Checklist）
+
+- [x] D1 需求与方案确认（阶段 1/2）
+  - 目标：确认仅改 Android Settings 展示层，不改保存/校验语义。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 改动边界明确：仅 Control 标签与项目外框。
+  - 测试点：
+    - 静态代码审阅。
+  - 回滚点：
+    - 无代码改动。
+
+- [x] D2 UI 调整实现（阶段 3.2）
+  - 目标：
+    - 去掉 metric 区 `Control` 标签。
+    - 去掉每个项目最外层圆角矩形框。
+  - 涉及模块/文件：
+    - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+  - 验收条件：
+    - 宽屏/窄屏均不再出现 `Control`。
+    - 宽屏/窄屏每项不再有最外层圆角边框。
+  - 测试点：
+    - 代码路径检查与 UI 结构检查。
+  - 回滚点：
+    - 回滚 `MainActivity.kt`。
+
+- [x] D3 构建验证
+  - 目标：确保改动可编译。
+  - 涉及模块/文件：
+    - `android/` Gradle 工程
+  - 验收条件：
+    - `:app:assembleDebug` 成功。
+  - 测试点：
+    - 构建日志无错误。
+  - 回滚点：
+    - 构建失败回退 D2。
+
+- [x] D4 Code Review（阶段 3.3）
+  - 目标：输出七项审查结论。
+  - 涉及模块/文件：
+    - `MainActivity.kt`
+    - `todo.md`
+  - 验收条件：
+    - 七项审查通过/不通过明确。
+  - 测试点：
+    - diff + 构建结果。
+  - 回滚点：
+    - 不通过返回 D2 修正。
+
+- [x] D5 归档变更（阶段 4）
+  - 目标：形成可审计归档。
+  - 涉及模块/文件：
+    - `docs/change/2026-03-05_android-settings-remove-control-item-frame.md`
+  - 验收条件：
+    - 文档字段完整可交接。
+  - 测试点：
+    - 字段完整性检查。
+  - 回滚点：
+    - 文档修订直至完整。
+
+## 依赖关系
+
+- D2 依赖 D1。
+- D3 依赖 D2。
+- D4 依赖 D2、D3。
+- D5 依赖 D4 通过。
+
+## 风险与注意事项
+
+- 仅移除目标标签和项目外框，不改其他交互部件（开关/输入/保存状态）。
+- 去掉外框后需保持分隔可读性（依赖列表容器和分隔线）。
+
+

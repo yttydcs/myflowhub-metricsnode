@@ -676,64 +676,54 @@ private fun SettingsRow(
     onVarNameChange: (String) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(10.dp),
-        color = colors.surface,
-        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Column(modifier = Modifier.weight(0.34f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Text(
-                    setting.metric,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace,
-                )
-                if (isControllable) {
-                    CapabilityTag(text = "Control")
-                }
-            }
+        Column(modifier = Modifier.weight(0.34f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(
+                setting.metric,
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+        }
 
-            Column(modifier = Modifier.weight(0.38f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                CompactVarNameField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = setting.varName,
-                    enabled = !saving,
-                    isError = !varNameError.isNullOrBlank(),
-                    onValueChange = onVarNameChange,
-                )
-                if (!varNameError.isNullOrBlank()) {
-                    Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
-                }
+        Column(modifier = Modifier.weight(0.38f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            CompactVarNameField(
+                modifier = Modifier.fillMaxWidth(),
+                value = setting.varName,
+                enabled = !saving,
+                isError = !varNameError.isNullOrBlank(),
+                onValueChange = onVarNameChange,
+            )
+            if (!varNameError.isNullOrBlank()) {
+                Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
             }
+        }
 
-            Box(modifier = Modifier.weight(0.28f), contentAlignment = Alignment.CenterStart) {
-                MetricValuePill(valueText = valueText, enabled = setting.enabled)
-            }
+        Box(modifier = Modifier.weight(0.28f), contentAlignment = Alignment.CenterStart) {
+            MetricValuePill(valueText = valueText, enabled = setting.enabled)
+        }
 
-            Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
-                if (isControllable) {
-                    CompactSwitch(
-                        checked = setting.writable,
-                        enabled = !saving,
-                        onCheckedChange = onWritableChange,
-                    )
-                } else {
-                    CapabilityTag(text = "Read-only")
-                }
-            }
-
-            Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
+        Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
+            if (isControllable) {
                 CompactSwitch(
-                    checked = setting.enabled,
+                    checked = setting.writable,
                     enabled = !saving,
-                    onCheckedChange = onEnabledChange,
+                    onCheckedChange = onWritableChange,
                 )
+            } else {
+                CapabilityTag(text = "Read-only")
             }
+        }
+
+        Box(modifier = Modifier.width(86.dp), contentAlignment = Alignment.CenterEnd) {
+            CompactSwitch(
+                checked = setting.enabled,
+                enabled = !saving,
+                onCheckedChange = onEnabledChange,
+            )
         }
     }
 }
@@ -750,85 +740,75 @@ private fun SettingsCompactRow(
     onVarNameChange: (String) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = colors.surface,
-        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.6f)),
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Text(
-                        setting.metric,
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontFamily = FontFamily.Monospace,
-                    )
-                    if (isControllable) {
-                        CapabilityTag(text = "Control")
-                    }
-                }
-                MetricValuePill(valueText = valueText, enabled = setting.enabled)
-            }
-
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                CompactVarNameField(
-                    modifier = Modifier.fillMaxWidth(),
-                    value = setting.varName,
-                    enabled = !saving,
-                    isError = !varNameError.isNullOrBlank(),
-                    onValueChange = onVarNameChange,
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    setting.metric,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontFamily = FontFamily.Monospace,
                 )
             }
+            MetricValuePill(valueText = valueText, enabled = setting.enabled)
+        }
 
-            if (!varNameError.isNullOrBlank()) {
-                Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
-            }
-
-            Row(
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            CompactVarNameField(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (isControllable) {
-                    SettingToggle(
-                        modifier = Modifier.weight(1f),
-                        label = "Writeable",
-                        checked = setting.writable,
-                        enabled = !saving,
-                        onCheckedChange = onWritableChange,
-                    )
-                } else {
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(10.dp),
-                        color = colors.surfaceVariant.copy(alpha = 0.4f),
-                        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
-                    ) {
-                        Text(
-                            text = "Writeable: Read-only",
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = colors.onSurfaceVariant,
-                            textAlign = TextAlign.Start,
-                        )
-                    }
-                }
+                value = setting.varName,
+                enabled = !saving,
+                isError = !varNameError.isNullOrBlank(),
+                onValueChange = onVarNameChange,
+            )
+        }
+
+        if (!varNameError.isNullOrBlank()) {
+            Text(varNameError, style = MaterialTheme.typography.labelSmall, color = colors.error)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (isControllable) {
                 SettingToggle(
                     modifier = Modifier.weight(1f),
-                    label = "Enabled",
-                    checked = setting.enabled,
+                    label = "Writeable",
+                    checked = setting.writable,
                     enabled = !saving,
-                    onCheckedChange = onEnabledChange,
+                    onCheckedChange = onWritableChange,
                 )
+            } else {
+                Surface(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(10.dp),
+                    color = colors.surfaceVariant.copy(alpha = 0.4f),
+                    border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.55f)),
+                ) {
+                    Text(
+                        text = "Writeable: Read-only",
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colors.onSurfaceVariant,
+                        textAlign = TextAlign.Start,
+                    )
+                }
             }
+            SettingToggle(
+                modifier = Modifier.weight(1f),
+                label = "Enabled",
+                checked = setting.enabled,
+                enabled = !saving,
+                onCheckedChange = onEnabledChange,
+            )
         }
     }
 }

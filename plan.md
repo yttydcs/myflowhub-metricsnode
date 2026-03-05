@@ -210,3 +210,15 @@
   - 将相关错误文案中的 `var_name` 替换为 `mapping`。
 - 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
 - 归档：`docs/change/2026-03-05_android-settings-label-cleanup.md`
+
+---
+
+## 2026-03-05 安卓 Settings 移除 Control 标签与项目外框（refactor/android-settings-remove-control-and-item-frame）
+
+- 状态：已完成并通过构建验证。
+- 变更摘要：
+  - 移除 metric 列 `Control` 标签。
+  - 移除宽屏/窄屏每个设置项最外层圆角边框。
+  - 保留 writeable/read-only/enable 交互逻辑与保存链路。
+- 验证：`android/.\\gradlew.bat :app:assembleDebug` 构建成功。
+- 归档：`docs/change/2026-03-05_android-settings-remove-control-item-frame.md`
