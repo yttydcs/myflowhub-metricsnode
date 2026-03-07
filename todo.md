@@ -613,3 +613,113 @@
 - 去掉外框后需保持分隔可读性（依赖列表容器和分隔线）。
 
 
+---
+
+# MetricsNode CI 构建失败修复（2026-03-07）
+
+> Worktree：`d:\project\MyFlowHub3\worktrees\fix-metricsnode-ci`  
+> Branch：`fix/metricsnode-ci`  
+> 基线：`origin/main`（commit `450558b`）  
+>
+> 目标：修复 GitHub Actions `ci` 在 `MyFlowHub-MetricsNode` 上的构建失败，使其能稳定产出 Windows EXE 与 Android Debug APK（含 gomobile AAR），并保障 `push(main)` 的 `debug-latest` 发布链路恢复可用。
+
+## 项目目标与当前状态
+
+- 当前失败现象（已本地复现，与 CI 注释一致）：
+  - Windows：`wails build` 在 “Generating bindings” 阶段失败：`pattern all:frontend/dist: no matching files found`  
+    - 根因：Wails 在生成 bindings 时会触发 Go 编译检查 `//go:embed all:frontend/dist`；而 `windows/frontend/dist` 在 clean checkout 中不存在（被 `.gitignore` 忽略），导致直接报错。
+  - Android：`scripts/build_aar.sh`（`gomobile bind`）失败：`go: updates to go.mod needed; to update it: go mod tidy`  
+    - 根因：`nodemobile` 子模块依赖图未对齐（疑似与 SDK 升级到 `v0.1.2` 后间接依赖变化有关），导致 gomobile 在只读模式下拒绝自动改写 `go.mod`。
+
+## 可执行任务清单（Checklist）
+
+- [ ] CI1 需求与验收基线确认（阶段 1/2 复核）
+  - 目标：把“必须修复”的 CI 产物与门禁明确化，避免只修一个 job 导致 `publish-debug-latest` 仍被 needs 阻塞。
+  - 涉及模块/文件：
+    - `.github/workflows/ci.yml`
+  - 验收条件：
+    - `build-windows-amd64` 成功产出 `windows/build/bin/windows.exe`
+    - `build-android-debug` 成功产出：
+      - `android/app/build/outputs/apk/debug/app-debug.apk`
+      - `android/app/libs/myflowhub.aar`
+    - `push(main)` 时 `publish-debug-latest` 可执行并上传 EXE/APK（AAR 也应存在）。
+  - 测试点：
+    - 本地复现命令记录（Windows `wails build` / `scripts/build_aar.sh`）。
+  - 回滚点：
+    - 无代码改动，本任务无回滚点。
+
+- [ ] CI2 修复 Windows：确保 Wails 生成 bindings 前 `frontend/dist` 非空
+  - 目标：让 clean checkout 场景下的 `wails build` 不再因 `go:embed all:frontend/dist` 为空而失败。
+  - 方案（最小变更，推荐）：
+    - 在 `.github/workflows/ci.yml` 的 Windows job 里，在安装 Wails 后、执行 `wails build` 前新增一步：
+      - 创建目录 `windows/frontend/dist`
+      - 写入临时占位文件（例如 `windows/frontend/dist/.keep`）
+    - 说明：Vite 默认会清空 `dist` 目录再输出真实产物，因此占位文件不会污染最终 embed 内容。
+  - 可选加固（若需要覆盖本地开发）：
+    - 同步修正 `scripts/build-windows.ps1`：若 `frontend/dist` 不存在则创建并写占位文件，再执行 `wails build`。
+  - 涉及模块/文件：
+    - `.github/workflows/ci.yml`
+    - （可选）`scripts/build-windows.ps1`
+  - 验收条件：
+    - 在本地（模拟 clean 状态：删除 `windows/frontend/dist`）执行：
+      - `cd windows; $env:GOWORK='off'; wails build -platform windows/amd64 -nopackage`
+      - 可成功生成 `windows/build/bin/windows.exe`
+    - GitHub Actions `build-windows-amd64` 通过。
+  - 测试点：
+    - 本地 `wails build` 成功一次（输出 exe）
+  - 回滚点：
+    - 回退 `.github/workflows/ci.yml`（以及可选脚本）本次提交。
+
+- [ ] CI3 修复 Android：提交 `nodemobile` 模块 tidy，消除 gomobile 的只读失败
+  - 目标：让 `bash scripts/build_aar.sh` 在 CI 中可稳定生成 `android/app/libs/myflowhub.aar`。
+  - 实施：
+    - 在 `nodemobile/` 目录执行 `GOWORK=off go mod tidy`，提交 `nodemobile/go.mod` + `nodemobile/go.sum` 变更。
+  - 涉及模块/文件：
+    - `nodemobile/go.mod`
+    - `nodemobile/go.sum`
+  - 验收条件：
+    - 本地执行 `bash scripts/build_aar.sh`（或 CI 中同等步骤）不再出现 `go mod tidy` 提示。
+    - CI `Verify outputs` 阶段能找到 `android/app/libs/myflowhub.aar`。
+  - 测试点：
+    - 本地（Windows 可用 Git-Bash）：`bash scripts/build_aar.sh`
+  - 回滚点：
+    - 回退 `nodemobile/go.mod/go.sum` 本次提交。
+
+- [ ] CI4 回归验证（本地 + CI）
+  - 目标：在合并前尽可能本地验证关键链路，减少“上 CI 才发现问题”的成本。
+  - 涉及模块/文件：
+    - `windows/`、`android/`、`scripts/`、`.github/workflows/ci.yml`
+  - 验收条件：
+    - Windows：`wails build` 可产出 exe
+    - Android：`scripts/build_aar.sh` 可产出 AAR；`android/gradlew :app:assembleDebug` 可产出 APK
+  - 测试点：
+    - Windows：`cd windows; $env:GOWORK='off'; wails build -platform windows/amd64 -nopackage`
+    - Android：`bash scripts/build_aar.sh`；`cd android; ./gradlew :app:assembleDebug --stacktrace --no-daemon --console=plain`
+  - 回滚点：
+    - 若失败，按任务粒度逐个回退 CI2/CI3 的提交定位。
+
+- [ ] CI5 Code Review（阶段 3.3）+ 归档（阶段 4）
+  - 目标：按门禁输出审查结论，并新增可审计变更文档。
+  - 涉及模块/文件：
+    - `todo.md`
+    - `docs/change/2026-03-07_metricsnode-ci-fix.md`（新增）
+  - 验收条件：
+    - Code Review 七项均有结论（通过/不通过）
+    - 归档文档包含：背景目标、改动明细、任务映射、关键权衡、测试结果、风险与回滚
+  - 测试点：
+    - 文档自查完整性
+  - 回滚点：
+    - 文档可迭代修订直至完整。
+
+## 依赖关系
+
+- CI2/CI3 依赖 CI1 明确验收基线。
+- CI4 依赖 CI2 + CI3。
+- CI5 依赖 CI4 验证通过。
+
+## 风险与注意事项
+
+- `frontend/dist` 占位文件策略需要确保不会进入最终产物：依赖 Vite 默认清空 `dist`；若未来前端构建配置改变，需要重新确认。
+- `go mod tidy` 可能带来间接依赖版本变化；需通过 CI4 的 AAR/APK/EXE 构建验证兜底。
+
+

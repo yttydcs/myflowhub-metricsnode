@@ -12,7 +12,7 @@ require (
 	github.com/moutend/go-wca v0.3.0 // indirect
 	github.com/yttydcs/myflowhub-core v0.2.0 // indirect
 	github.com/yttydcs/myflowhub-proto v0.1.1 // indirect
-	github.com/yttydcs/myflowhub-sdk v0.1.0 // indirect
+	github.com/yttydcs/myflowhub-sdk v0.1.2 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
 	golang.org/x/sys v0.41.0 // indirect

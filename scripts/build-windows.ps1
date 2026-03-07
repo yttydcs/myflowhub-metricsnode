@@ -37,6 +37,15 @@ if (-not $KeepGoWork) {
   $env:GOWORK = "off"
 }
 
+if (-not (Test-Path $frontendDistPath)) {
+  Write-Host "Creating frontend dist directory for go:embed: $frontendDistPath" -ForegroundColor Yellow
+  New-Item -ItemType Directory -Force -Path $frontendDistPath | Out-Null
+}
+$keepFile = Join-Path $frontendDistPath ".keep"
+if (-not (Test-Path $keepFile)) {
+  New-Item -ItemType File -Force -Path $keepFile | Out-Null
+}
+
 Push-Location $windowsPath
 try {
   if (-not $SkipCleanBindings -and (Test-Path $bindingsPath)) {

@@ -9,8 +9,8 @@ github.com/yttydcs/myflowhub-core v0.2.0 h1:tZ5X8oqP3OIXRZdlmBRYmMu3bJNBGIP+F0MS
 github.com/yttydcs/myflowhub-core v0.2.0/go.mod h1:uUmSQZ3JVVitpQVXA8goupbXpSbd+rahFZjx5x/rS/4=
 github.com/yttydcs/myflowhub-proto v0.1.1 h1:0oVHnHaYbrV6CWQ0mREWMwDDkkUBIpPMTtLw2TjJLY8=
 github.com/yttydcs/myflowhub-proto v0.1.1/go.mod h1:1shJnnAYNZYd1KnGNtvgdygTaeCyx5duMnxrRLRouOc=
-github.com/yttydcs/myflowhub-sdk v0.1.0 h1:oleonppFd6YRwjodrZHGZPIPgBGotv5XaV809qH77Ok=
-github.com/yttydcs/myflowhub-sdk v0.1.0/go.mod h1:c7tGDERQkNAiYCu+UhfMr+p7vwifz3IYiLeeARaMflU=
+github.com/yttydcs/myflowhub-sdk v0.1.2 h1:M2STeTlqrkR4IPX0oYeRh7lBQU+c9YQyy3013OkYnpg=
+github.com/yttydcs/myflowhub-sdk v0.1.2/go.mod h1:c7tGDERQkNAiYCu+UhfMr+p7vwifz3IYiLeeARaMflU=
 golang.org/x/mobile v0.0.0-20260217195705-b56b3793a9c4 h1:uT3oYo9M38vJa7JpT4kCie2lJwOpoUrx7FvV0H7kXSc=
 golang.org/x/mobile v0.0.0-20260217195705-b56b3793a9c4/go.mod h1:4OGHIUSBiIqyFAQDaX1tpY0BVnO20DvNDeATBu8aeFQ=
 golang.org/x/mod v0.33.0 h1:tHFzIWbBifEmbwtGz65eaWyGiGZatSrT9prnU8DbVL8=

@@ -47,6 +47,14 @@ jobs:
           Add-Content -Path $env:GITHUB_PATH -Value "$goPath\bin"
           wails version
 
+      - name: Prepare frontend dist (go:embed)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path windows/frontend/dist | Out-Null
+          if (-not (Test-Path "windows/frontend/dist/.keep")) {
+            New-Item -ItemType File -Force -Path windows/frontend/dist/.keep | Out-Null
+          }
+
       - name: Build (Windows amd64)
         shell: pwsh
         working-directory: windows
