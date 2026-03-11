@@ -66,8 +66,8 @@ github.com/yttydcs/myflowhub-core v0.2.0 h1:tZ5X8oqP3OIXRZdlmBRYmMu3bJNBGIP+F0MS
 github.com/yttydcs/myflowhub-core v0.2.0/go.mod h1:uUmSQZ3JVVitpQVXA8goupbXpSbd+rahFZjx5x/rS/4=
 github.com/yttydcs/myflowhub-proto v0.1.1 h1:0oVHnHaYbrV6CWQ0mREWMwDDkkUBIpPMTtLw2TjJLY8=
 github.com/yttydcs/myflowhub-proto v0.1.1/go.mod h1:1shJnnAYNZYd1KnGNtvgdygTaeCyx5duMnxrRLRouOc=
-github.com/yttydcs/myflowhub-sdk v0.1.0 h1:oleonppFd6YRwjodrZHGZPIPgBGotv5XaV809qH77Ok=
-github.com/yttydcs/myflowhub-sdk v0.1.0/go.mod h1:c7tGDERQkNAiYCu+UhfMr+p7vwifz3IYiLeeARaMflU=
+github.com/yttydcs/myflowhub-sdk v0.1.2 h1:M2STeTlqrkR4IPX0oYeRh7lBQU+c9YQyy3013OkYnpg=
+github.com/yttydcs/myflowhub-sdk v0.1.2/go.mod h1:c7tGDERQkNAiYCu+UhfMr+p7vwifz3IYiLeeARaMflU=
 golang.org/x/crypto v0.37.0 h1:kJNSjF/Xp7kU0iB2Z+9viTPMW4EqqsrywMXLJOOsXSE=
 golang.org/x/crypto v0.37.0/go.mod h1:vg+k43peMZ0pUMhYmVAWysMK35e6ioLh3wB8ZCAfbVc=
 golang.org/x/net v0.0.0-20210505024714-0287a6fb4125/go.mod h1:9nx3DQGgdP8bBQD5qxJ1jj9UTztislL4KSBs9R2vV5Y=
