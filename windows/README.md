@@ -52,3 +52,15 @@ powershell -ExecutionPolicy Bypass -File ..\scripts\build-windows.ps1 -SkipGener
 # Keep current GOWORK env
 powershell -ExecutionPolicy Bypass -File ..\scripts\build-windows.ps1 -KeepGoWork
 ```
+
+## Troubleshooting stale or foreign Wails bindings
+
+If `npm run build` fails with missing exports such as `BootstrapGet`, `MetricsSettingsGet`, or `StartReporting`, inspect `windows/frontend/wailsjs/go/main/App.d.ts` before changing Vue code.
+
+- Expected MetricsNode bindings include exports like `BootstrapGet`, `Status`, and `MetricsSettingsGet`.
+- If the file instead contains exports such as `AboutState`, `FlowProjectsState`, or `SaveHomeState`, the worktree is using bindings from another Wails app.
+- Recovery path:
+  - run `powershell -ExecutionPolicy Bypass -File .\scripts\build-windows.ps1`
+  - or from `windows/`, run `powershell -ExecutionPolicy Bypass -File ..\scripts\build-windows.ps1`
+
+The build script now validates the generated binding surface before `wails build` so this failure mode is reported explicitly.
