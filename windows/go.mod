@@ -24,6 +24,7 @@ require (
 	github.com/moutend/go-wca v0.3.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pkg/errors v0.9.1 // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/samber/lo v1.49.1 // indirect
 	github.com/tkrajina/go-reflector v0.5.8 // indirect
@@ -31,13 +32,13 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	github.com/yttydcs/myflowhub-core v0.4.0 // indirect
-	github.com/yttydcs/myflowhub-proto v0.1.1 // indirect
-	github.com/yttydcs/myflowhub-sdk v0.1.4 // indirect
-	golang.org/x/crypto v0.37.0 // indirect
-	golang.org/x/net v0.35.0 // indirect
+	github.com/yttydcs/myflowhub-core v0.4.9 // indirect
+	github.com/yttydcs/myflowhub-proto v0.1.5 // indirect
+	github.com/yttydcs/myflowhub-sdk v0.1.12 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
+	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect
-	golang.org/x/text v0.24.0 // indirect
+	golang.org/x/text v0.28.0 // indirect
 )
 
 replace github.com/yttydcs/myflowhub-metricsnode => ..

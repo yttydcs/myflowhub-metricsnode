@@ -5,11 +5,16 @@ go 1.25.0
 require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/moutend/go-wca v0.3.0
-	github.com/yttydcs/myflowhub-core v0.4.0
-	github.com/yttydcs/myflowhub-proto v0.1.1
-	github.com/yttydcs/myflowhub-sdk v0.1.4
+	github.com/yttydcs/myflowhub-core v0.4.9
+	github.com/yttydcs/myflowhub-proto v0.1.5
+	github.com/yttydcs/myflowhub-sdk v0.1.12
 )
 
 require golang.org/x/sys v0.42.0
 
-require github.com/godbus/dbus/v5 v5.2.2 // indirect
+require (
+	github.com/godbus/dbus/v5 v5.2.2 // indirect
+	github.com/quic-go/quic-go v0.59.0 // indirect
+	golang.org/x/crypto v0.41.0 // indirect
+	golang.org/x/net v0.43.0 // indirect
+)
