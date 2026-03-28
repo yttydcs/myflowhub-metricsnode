@@ -34,7 +34,7 @@ require (
 	github.com/wailsapp/mimetype v1.4.1 // indirect
 	github.com/yttydcs/myflowhub-core v0.4.9 // indirect
 	github.com/yttydcs/myflowhub-proto v0.1.5 // indirect
-	github.com/yttydcs/myflowhub-sdk v0.1.12 // indirect
+	github.com/yttydcs/myflowhub-sdk v0.1.13 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect

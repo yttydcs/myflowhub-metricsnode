@@ -19,8 +19,8 @@ github.com/yttydcs/myflowhub-core v0.4.9 h1:8IiqTrtTjY1QifWmGzaBA1+kTxoaAQYQL7/W
 github.com/yttydcs/myflowhub-core v0.4.9/go.mod h1:/XfiiRJgVlnEe9Eo2ug0yn4l9x7k3+wq+3GJXZkJzUU=
 github.com/yttydcs/myflowhub-proto v0.1.5 h1:WqIf/5DFq8lxYXdLEcghZeJucu9u/5OfBKcx2mrYsOI=
 github.com/yttydcs/myflowhub-proto v0.1.5/go.mod h1:1shJnnAYNZYd1KnGNtvgdygTaeCyx5duMnxrRLRouOc=
-github.com/yttydcs/myflowhub-sdk v0.1.12 h1:DlZbFMdkyN9r5PxqxQFZbNKdZobnHMzptL+dRh94zdY=
-github.com/yttydcs/myflowhub-sdk v0.1.12/go.mod h1:iG97TuBShhG8ZKcCCPGlHULYMbeOvtMq2yDcC9o97Yw=
+github.com/yttydcs/myflowhub-sdk v0.1.13 h1:NN8HuNZO0bE5cD5AVVQYpq2UsqEoBH1BJHwc6QRttKA=
+github.com/yttydcs/myflowhub-sdk v0.1.13/go.mod h1:Wyu5u9rISojF3vAJz0pLFE3ljbEbAVHGRlIYlGMDAZ4=
 go.uber.org/mock v0.5.2 h1:LbtPTcP8A5k9WPXj54PPPbjcI4Y6lhyOZXn+VS7wNko=
 go.uber.org/mock v0.5.2/go.mod h1:wLlUxC2vVTPTaE3UD51E0BGOAElKrILxhVSDYQLld5o=
 golang.org/x/crypto v0.48.0 h1:/VRzVqiRSggnhY7gNRxPauEQ5Drw9haKdM0jqfcCFts=
