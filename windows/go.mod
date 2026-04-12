@@ -32,9 +32,9 @@ require (
 	github.com/valyala/fasttemplate v1.2.2 // indirect
 	github.com/wailsapp/go-webview2 v1.0.22 // indirect
 	github.com/wailsapp/mimetype v1.4.1 // indirect
-	github.com/yttydcs/myflowhub-core v0.4.9 // indirect
-	github.com/yttydcs/myflowhub-proto v0.1.5 // indirect
-	github.com/yttydcs/myflowhub-sdk v0.1.13 // indirect
+	github.com/yttydcs/myflowhub-core v0.4.10 // indirect
+	github.com/yttydcs/myflowhub-proto v0.1.7 // indirect
+	github.com/yttydcs/myflowhub-sdk v0.1.14 // indirect
 	golang.org/x/crypto v0.41.0 // indirect
 	golang.org/x/net v0.43.0 // indirect
 	golang.org/x/sys v0.42.0 // indirect

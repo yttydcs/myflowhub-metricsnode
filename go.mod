@@ -5,9 +5,9 @@ go 1.25.0
 require (
 	github.com/go-ole/go-ole v1.3.0
 	github.com/moutend/go-wca v0.3.0
-	github.com/yttydcs/myflowhub-core v0.4.9
-	github.com/yttydcs/myflowhub-proto v0.1.5
-	github.com/yttydcs/myflowhub-sdk v0.1.13
+	github.com/yttydcs/myflowhub-core v0.4.10
+	github.com/yttydcs/myflowhub-proto v0.1.7
+	github.com/yttydcs/myflowhub-sdk v0.1.14
 )
 
 require golang.org/x/sys v0.42.0

@@ -12,9 +12,9 @@ require (
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/moutend/go-wca v0.3.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
-	github.com/yttydcs/myflowhub-core v0.4.9 // indirect
-	github.com/yttydcs/myflowhub-proto v0.1.5 // indirect
-	github.com/yttydcs/myflowhub-sdk v0.1.13 // indirect
+	github.com/yttydcs/myflowhub-core v0.4.10 // indirect
+	github.com/yttydcs/myflowhub-proto v0.1.7 // indirect
+	github.com/yttydcs/myflowhub-sdk v0.1.14 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/mod v0.33.0 // indirect
 	golang.org/x/net v0.50.0 // indirect
