@@ -1,5 +1,7 @@
 package main
 
+// Context: This file belongs to the MetricsNode application layer around main.
+
 import (
 	"embed"
 

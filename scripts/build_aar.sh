@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# Context: This file belongs to the MetricsNode application layer around build_aar.
+
 set -euo pipefail
 
 TARGET="${1:-android/arm64,android/arm,android/amd64,android/386}"

@@ -1,5 +1,7 @@
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around management.
+
 import (
 	"encoding/json"
 	"strings"

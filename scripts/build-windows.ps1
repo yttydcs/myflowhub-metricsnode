@@ -1,3 +1,5 @@
+# Context: This file belongs to the MetricsNode application layer around build-windows.
+
 [CmdletBinding()]
 param(
   [string]$WindowsDir = "windows",

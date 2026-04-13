@@ -1,5 +1,7 @@
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around control_queue_test.
+
 import "testing"
 
 func TestActionQueue_DequeueAll(t *testing.T) {
@@ -23,4 +25,3 @@ func TestActionQueue_DequeueAll(t *testing.T) {
 		t.Fatalf("expected queue cleared, got %d", len(again))
 	}
 }
-

@@ -1,5 +1,7 @@
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around config_test.
+
 import (
 	"encoding/json"
 	"log/slog"

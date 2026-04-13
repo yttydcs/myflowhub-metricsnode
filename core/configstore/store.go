@@ -1,5 +1,7 @@
 package configstore
 
+// Context: This file belongs to the MetricsNode application layer around store.
+
 import (
 	"encoding/json"
 	"errors"

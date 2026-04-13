@@ -2,6 +2,8 @@
 
 package metrics
 
+// Context: This file belongs to the MetricsNode application layer around collectors_other.
+
 import (
 	"context"
 	"log/slog"

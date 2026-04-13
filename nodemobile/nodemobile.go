@@ -1,5 +1,7 @@
 package nodemobile
 
+// Context: This file belongs to the MetricsNode application layer around nodemobile.
+
 import (
 	"encoding/json"
 	"errors"

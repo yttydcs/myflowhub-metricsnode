@@ -2,6 +2,8 @@
 
 package actuator
 
+// Context: This file belongs to the MetricsNode application layer around brightness_windows.
+
 import (
 	"errors"
 	"fmt"

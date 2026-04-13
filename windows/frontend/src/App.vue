@@ -1,4 +1,5 @@
 <script lang="ts" setup>
+// Context: This file belongs to the MetricsNode application layer around App.
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue"
 import {
   BootstrapGet,

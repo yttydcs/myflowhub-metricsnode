@@ -2,6 +2,8 @@
 
 package actuator
 
+// Context: This file belongs to the MetricsNode application layer around volume_windows.
+
 import (
 	"errors"
 
@@ -96,4 +98,3 @@ func (v *EndpointVolume) SetMuted(muted bool) error {
 	}
 	return v.endpoint.SetMute(muted, nil)
 }
-

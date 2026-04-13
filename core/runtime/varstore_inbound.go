@@ -1,5 +1,7 @@
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around varstore_inbound.
+
 import (
 	"encoding/json"
 	"strconv"

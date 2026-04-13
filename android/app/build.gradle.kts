@@ -1,3 +1,5 @@
+// Context: This file belongs to the MetricsNode application layer around build.gradle.
+
 import org.gradle.api.JavaVersion
 
 plugins {

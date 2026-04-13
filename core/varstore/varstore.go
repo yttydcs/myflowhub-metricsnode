@@ -1,5 +1,7 @@
 package varstore
 
+// Context: This file belongs to the MetricsNode application layer around varstore.
+
 import (
 	"errors"
 	"fmt"
@@ -89,4 +91,3 @@ func ValidVarName(name string) bool {
 	}
 	return true
 }
-

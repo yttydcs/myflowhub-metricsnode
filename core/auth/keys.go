@@ -1,5 +1,7 @@
 package auth
 
+// Context: This file belongs to the MetricsNode application layer around keys.
+
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -182,4 +184,3 @@ func GenerateNonce(n int) string {
 	}
 	return hex.EncodeToString(buf)
 }
-

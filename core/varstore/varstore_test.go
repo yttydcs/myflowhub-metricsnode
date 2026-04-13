@@ -1,5 +1,7 @@
 package varstore
 
+// Context: This file belongs to the MetricsNode application layer around varstore_test.
+
 import "testing"
 
 func TestValidVarName(t *testing.T) {
@@ -20,4 +22,3 @@ func TestValidVarName(t *testing.T) {
 		}
 	}
 }
-

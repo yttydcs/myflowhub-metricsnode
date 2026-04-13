@@ -1,5 +1,7 @@
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around control_queue.
+
 import (
 	"context"
 	"sort"
@@ -80,4 +82,3 @@ func (q *actionQueue) Wait(ctx context.Context) bool {
 		return true
 	}
 }
-

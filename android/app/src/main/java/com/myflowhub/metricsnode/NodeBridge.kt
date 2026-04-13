@@ -1,4 +1,5 @@
 package com.myflowhub.metricsnode
+// Context: This file belongs to the MetricsNode application layer around NodeBridge.
 
 import org.json.JSONArray
 import java.lang.reflect.Method

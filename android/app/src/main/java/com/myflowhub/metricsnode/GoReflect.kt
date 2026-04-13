@@ -1,4 +1,5 @@
 package com.myflowhub.metricsnode
+// Context: This file belongs to the MetricsNode application layer around GoReflect.
 
 import java.lang.reflect.Method
 

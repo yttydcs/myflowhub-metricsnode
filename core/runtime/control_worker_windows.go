@@ -2,6 +2,8 @@
 
 package runtime
 
+// Context: This file belongs to the MetricsNode application layer around control_worker_windows.
+
 import (
 	"context"
 	goruntime "runtime"

@@ -1,5 +1,7 @@
 package main
 
+// Context: This file belongs to the MetricsNode application layer around app.
+
 import (
 	"context"
 	"crypto/rand"

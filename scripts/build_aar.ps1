@@ -1,3 +1,5 @@
+# Context: This file belongs to the MetricsNode application layer around build_aar.
+
 param(
   [string]$Target = 'android/arm64,android/arm,android/amd64,android/386',
   [string]$JavaPkg = 'com.myflowhub.gomobile',

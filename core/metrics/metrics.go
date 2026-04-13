@@ -1,5 +1,7 @@
 package metrics
 
+// Context: This file belongs to the MetricsNode application layer around metrics.
+
 const (
 	MetricBatteryPercent    = "battery_percent"
 	MetricBatteryCharging   = "battery_charging"
