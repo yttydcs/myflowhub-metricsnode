@@ -2,7 +2,7 @@
 
 package runtime
 
-// Context: This file belongs to the MetricsNode application layer around control_worker_other.
+// 本文件承载 MetricsNode 应用层中与 `control_worker_other` 相关的逻辑。
 
 import "context"
 

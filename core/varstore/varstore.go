@@ -1,6 +1,6 @@
 package varstore
 
-// Context: This file belongs to the MetricsNode application layer around varstore.
+// 本文件承载 MetricsNode 应用层中与 `varstore` 相关的逻辑。
 
 import (
 	"errors"

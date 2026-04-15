@@ -1,5 +1,5 @@
 package com.myflowhub.metricsnode
-// Context: This file belongs to the MetricsNode application layer around MainActivity.
+// 本文件实现 MetricsNode Android 宿主中与 `MainActivity` 相关的逻辑。
 
 import android.Manifest
 import android.content.Context

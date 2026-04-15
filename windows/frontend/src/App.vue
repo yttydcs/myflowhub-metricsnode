@@ -1,5 +1,5 @@
 <script lang="ts" setup>
-// Context: This file belongs to the MetricsNode application layer around App.
+// 本文件实现 MetricsNode Windows 前端中的 `App` 组件或页面。
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from "vue"
 import {
   BootstrapGet,

@@ -1,4 +1,4 @@
-// Context: This file belongs to the MetricsNode application layer around vite.config.
+// 本文件承载 MetricsNode Windows 宿主中与 `vite.config` 相关的逻辑。
 
 import {defineConfig} from 'vite'
 import vue from '@vitejs/plugin-vue'

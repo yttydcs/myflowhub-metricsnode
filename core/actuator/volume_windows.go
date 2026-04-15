@@ -2,7 +2,7 @@
 
 package actuator
 
-// Context: This file belongs to the MetricsNode application layer around volume_windows.
+// 本文件承载 MetricsNode 应用层中与 `volume_windows` 相关的逻辑。
 
 import (
 	"errors"

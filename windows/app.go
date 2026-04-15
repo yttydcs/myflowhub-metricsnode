@@ -1,6 +1,6 @@
 package main
 
-// Context: This file belongs to the MetricsNode application layer around app.
+// 本文件承载 MetricsNode Windows 宿主中与 `app` 相关的逻辑。
 
 import (
 	"context"

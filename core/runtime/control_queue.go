@@ -1,6 +1,6 @@
 package runtime
 
-// Context: This file belongs to the MetricsNode application layer around control_queue.
+// 本文件承载 MetricsNode 应用层中与 `control_queue` 相关的逻辑。
 
 import (
 	"context"
@@ -20,6 +20,7 @@ type actionQueue struct {
 	latest map[string]string
 }
 
+// newActionQueue 创建只保留每个 metric 最新值的控制动作队列，避免重复积压旧指令。
 func newActionQueue() *actionQueue {
 	return &actionQueue{
 		notify: make(chan struct{}, 1),
@@ -27,6 +28,7 @@ func newActionQueue() *actionQueue {
 	}
 }
 
+// Enqueue 以 metric 为键覆盖旧值，保证消费者拿到的是最新控制意图。
 func (q *actionQueue) Enqueue(metric, value string) {
 	if q == nil {
 		return
@@ -50,6 +52,7 @@ func (q *actionQueue) Enqueue(metric, value string) {
 	}
 }
 
+// DequeueAll 批量取走当前快照，并按 metric 排序让下游处理结果稳定可预测。
 func (q *actionQueue) DequeueAll() []ControlAction {
 	if q == nil {
 		return nil
@@ -71,6 +74,7 @@ func (q *actionQueue) DequeueAll() []ControlAction {
 	return actions
 }
 
+// Wait 阻塞到有新动作或上下文取消，用于控制 worker 在空闲时休眠等待。
 func (q *actionQueue) Wait(ctx context.Context) bool {
 	if q == nil {
 		return false

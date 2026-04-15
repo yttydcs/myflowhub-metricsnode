@@ -2,7 +2,7 @@
 
 package metrics
 
-// Context: This file belongs to the MetricsNode application layer around collectors_windows.
+// 本文件承载 MetricsNode 应用层中与 `collectors_windows` 相关的逻辑。
 
 import (
 	"context"

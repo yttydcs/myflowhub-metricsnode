@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Context: This file belongs to the MetricsNode application layer around build_aar.
+# 本脚本承载 MetricsNode 中与 `build_aar` 相关的构建/验证流程。
 
 set -euo pipefail
 

@@ -1,6 +1,6 @@
 package metrics
 
-// Context: This file belongs to the MetricsNode application layer around metrics.
+// 本文件承载 MetricsNode 应用层中与 `metrics` 相关的逻辑。
 
 const (
 	MetricBatteryPercent    = "battery_percent"

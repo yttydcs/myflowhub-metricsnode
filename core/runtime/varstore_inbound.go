@@ -1,6 +1,6 @@
 package runtime
 
-// Context: This file belongs to the MetricsNode application layer around varstore_inbound.
+// 本文件承载 MetricsNode 应用层中与 `varstore_inbound` 相关的逻辑。
 
 import (
 	"encoding/json"

@@ -1,4 +1,4 @@
-// Context: This file belongs to the MetricsNode application layer around vite-env.d.
+// 本文件承载 MetricsNode Windows 前端中与 `vite-env` 相关的逻辑。
 
 /// <reference types="vite/client" />
 

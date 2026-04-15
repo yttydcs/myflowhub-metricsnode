@@ -1,6 +1,6 @@
 package runtime
 
-// Context: This file belongs to the MetricsNode application layer around management.
+// 本文件承载 MetricsNode 应用层中与 `management` 相关的逻辑。
 
 import (
 	"encoding/json"
@@ -12,6 +12,7 @@ import (
 	"github.com/yttydcs/myflowhub-sdk/transport"
 )
 
+// tryHandleManagementFrame 只拦截 management 的命令帧，把其他协议继续留给常规分发链。
 func (r *Runtime) tryHandleManagementFrame(hdr core.IHeader, payload []byte) bool {
 	if r == nil || hdr == nil || len(payload) == 0 {
 		return false
@@ -26,6 +27,7 @@ func (r *Runtime) tryHandleManagementFrame(hdr core.IHeader, payload []byte) boo
 	return true
 }
 
+// handleManagementCmd 处理本节点可本地回答的配置查询/写入请求，避免额外转发。
 func (r *Runtime) handleManagementCmd(hdr core.IHeader, payload []byte) {
 	if r == nil || hdr == nil || len(payload) == 0 {
 		return
@@ -77,6 +79,7 @@ func (r *Runtime) handleManagementCmd(hdr core.IHeader, payload []byte) {
 	}
 }
 
+// sendManagementResp 统一补齐 response header 与 source_id，保证 management 回包链路稳定。
 func (r *Runtime) sendManagementResp(req core.IHeader, action string, data any) {
 	if r == nil || req == nil {
 		return

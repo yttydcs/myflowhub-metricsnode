@@ -1,4 +1,4 @@
-# Context: This file belongs to the MetricsNode application layer around build-windows.
+# 本脚本承载 MetricsNode 中与 `build-windows` 相关的构建/验证流程。
 
 [CmdletBinding()]
 param(

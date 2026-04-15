@@ -1,4 +1,4 @@
-// Context: This file belongs to the MetricsNode application layer around build.gradle.
+// 本文件承载 MetricsNode 工程中与 `build` 相关的构建配置。
 
 import org.gradle.api.JavaVersion
 

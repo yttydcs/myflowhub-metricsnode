@@ -1,5 +1,5 @@
 package com.myflowhub.metricsnode
-// Context: This file belongs to the MetricsNode application layer around GomobileLoader.
+// 本文件实现 MetricsNode Android 宿主中与 `GomobileLoader` 相关的逻辑。
 
 internal object GomobileLoader {
     fun loadNodeClass(): Class<*> {

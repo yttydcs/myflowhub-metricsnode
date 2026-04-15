@@ -1,4 +1,4 @@
-// Context: This file belongs to the MetricsNode application layer around settings.gradle.
+// 本文件承载 MetricsNode 工程中与 `settings` 相关的构建配置。
 
 pluginManagement {
     repositories {

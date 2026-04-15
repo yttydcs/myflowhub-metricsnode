@@ -1,6 +1,6 @@
 package runtime
 
-// Context: This file belongs to the MetricsNode application layer around varstore_inbound_test.
+// 本文件覆盖 MetricsNode 应用层中与 `varstore_inbound` 相关的行为。
 
 import (
 	"testing"

@@ -1,5 +1,5 @@
 package com.myflowhub.metricsnode
-// Context: This file belongs to the MetricsNode application layer around DeviceId.
+// 本文件实现 MetricsNode Android 宿主中与 `DeviceId` 相关的逻辑。
 
 import android.content.SharedPreferences
 import java.util.UUID

@@ -1,4 +1,4 @@
-# Context: This file belongs to the MetricsNode application layer around build_aar.
+# 本脚本承载 MetricsNode 中与 `build_aar` 相关的构建/验证流程。
 
 param(
   [string]$Target = 'android/arm64,android/arm,android/amd64,android/386',
