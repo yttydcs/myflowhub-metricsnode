@@ -18,6 +18,10 @@ export function Connect(arg1) {
   return window['go']['main']['App']['Connect'](arg1);
 }
 
+export function DequeueNotifications() {
+  return window['go']['main']['App']['DequeueNotifications']();
+}
+
 export function Disconnect() {
   return window['go']['main']['App']['Disconnect']();
 }
@@ -38,8 +42,24 @@ export function MetricsSettingsSet(arg1) {
   return window['go']['main']['App']['MetricsSettingsSet'](arg1);
 }
 
+export function NotifySettingsGet() {
+  return window['go']['main']['App']['NotifySettingsGet']();
+}
+
+export function NotifySettingsSet(arg1) {
+  return window['go']['main']['App']['NotifySettingsSet'](arg1);
+}
+
 export function Register(arg1) {
   return window['go']['main']['App']['Register'](arg1);
+}
+
+export function ShowNotification(arg1) {
+  return window['go']['main']['App']['ShowNotification'](arg1);
+}
+
+export function StartNotify() {
+  return window['go']['main']['App']['StartNotify']();
 }
 
 export function StartReporting() {
@@ -48,6 +68,10 @@ export function StartReporting() {
 
 export function Status() {
   return window['go']['main']['App']['Status']();
+}
+
+export function StopNotify() {
+  return window['go']['main']['App']['StopNotify']();
 }
 
 export function StopReporting() {

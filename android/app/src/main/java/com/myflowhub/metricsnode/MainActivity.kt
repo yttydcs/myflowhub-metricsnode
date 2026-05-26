@@ -50,6 +50,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -94,7 +95,7 @@ private fun MetricsNodeApp() {
 
     var state by remember { mutableStateOf(bridge.status()) }
 
-    var page by remember { mutableStateOf(0) } // 0=Connect 1=Settings
+    var page by remember { mutableStateOf(0) } // 0=Connect 1=Settings 2=Notify
 
     val notificationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
@@ -141,6 +142,7 @@ private fun MetricsNodeApp() {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         StatusPill(text = if (state.connected) "Connected" else "Disconnected", ok = state.connected)
                         StatusPill(text = if (state.reporting) "Reporting" else "Stopped", ok = state.reporting)
+                        StatusPill(text = if (state.notify) "Notify" else "Notify Off", ok = state.notify)
                     }
                 }
 
@@ -156,35 +158,232 @@ private fun MetricsNodeApp() {
                 TabRow(selectedTabIndex = page, modifier = Modifier.padding(top = 12.dp)) {
                     Tab(selected = page == 0, onClick = { page = 0 }, text = { Text("Connect") })
                     Tab(selected = page == 1, onClick = { page = 1 }, text = { Text("Settings") })
+                    Tab(selected = page == 2, onClick = { page = 2 }, text = { Text("Notify") })
                 }
 
                 Box(modifier = Modifier.fillMaxSize().padding(top = 12.dp)) {
-                    if (page == 0) {
-                        ConnectPage(
-                            context = context,
-                            prefs = prefs,
-                            addr = addr,
-                            onAddrChange = {
-                                addr = it
-                                prefs.edit().putString("hub_addr", it).apply()
-                            },
-                            deviceId = deviceId,
-                            onDeviceIdChange = {
-                                deviceId = it
-                                prefs.edit().putString(DeviceId.PrefKey, it).apply()
-                            },
-                            nodeIdText = nodeIdText,
-                            onNodeIdChange = {
-                                nodeIdText = it
-                                prefs.edit().putString("node_id", it).apply()
-                            },
-                            state = state,
+                    when (page) {
+                        0 -> {
+                            ConnectPage(
+                                context = context,
+                                prefs = prefs,
+                                addr = addr,
+                                onAddrChange = {
+                                    addr = it
+                                    prefs.edit().putString("hub_addr", it).apply()
+                                },
+                                deviceId = deviceId,
+                                onDeviceIdChange = {
+                                    deviceId = it
+                                    prefs.edit().putString(DeviceId.PrefKey, it).apply()
+                                },
+                                nodeIdText = nodeIdText,
+                                onNodeIdChange = {
+                                    nodeIdText = it
+                                    prefs.edit().putString("node_id", it).apply()
+                                },
+                                state = state,
+                            )
+                        }
+                        1 -> {
+                            SettingsPage(
+                                bridge = bridge,
+                                state = state,
+                            )
+                        }
+                        else -> {
+                            NotifyPage(
+                                context = context,
+                                bridge = bridge,
+                                state = state,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NotifyPage(
+    context: Context,
+    bridge: NodeBridge,
+    state: NodeState,
+) {
+    val scope = rememberCoroutineScope()
+    val topics = remember { mutableStateListOf<NotifyTopicSetting>() }
+    var topicDraft by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+
+    fun load() {
+        topics.clear()
+        topics.addAll(NotifyTopicSettingJson.parseList(bridge.notifySettingsGet()))
+        error = ""
+    }
+
+    fun validate(): String? {
+        val seen = HashSet<String>()
+        for (item in topics) {
+            val topic = item.topic.trim()
+            if (topic.isEmpty()) return "topic is required"
+            if (topic.length > 256) return "topic too long"
+            if (!seen.add(topic)) return "duplicate topic: $topic"
+        }
+        return null
+    }
+
+    fun save() {
+        val err = validate()
+        if (err != null) {
+            error = err
+            return
+        }
+        saving = true
+        val normalized = topics.map { NotifyTopicSetting(topic = it.topic.trim(), enabled = it.enabled) }
+        scope.launch {
+            runCatching { bridge.notifySettingsSet(NotifyTopicSettingJson.toJson(normalized)) }
+                .onFailure { error = it.message ?: it.toString() }
+            saving = false
+        }
+    }
+
+    fun saveBlocking(): Boolean {
+        val err = validate()
+        if (err != null) {
+            error = err
+            return false
+        }
+        val normalized = topics.map { NotifyTopicSetting(topic = it.topic.trim(), enabled = it.enabled) }
+        return runCatching {
+            bridge.notifySettingsSet(NotifyTopicSettingJson.toJson(normalized))
+            error = ""
+            true
+        }.getOrElse {
+            error = it.message ?: it.toString()
+            false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        load()
+    }
+
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Card {
+            Column(modifier = Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text("Notify Topics", style = MaterialTheme.typography.titleSmall)
+
+                OutlinedTextField(
+                    modifier = Modifier.fillMaxWidth(),
+                    value = topicDraft,
+                    onValueChange = { topicDraft = it },
+                    label = { Text("Topic") },
+                    singleLine = true,
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = !saving,
+                        onClick = {
+                            val topic = topicDraft.trim()
+                            if (topic.isBlank()) {
+                                error = "topic is required"
+                                return@Button
+                            }
+                            if (topics.any { it.topic.trim() == topic }) {
+                                error = "duplicate topic: $topic"
+                                return@Button
+                            }
+                            topics.add(NotifyTopicSetting(topic = topic, enabled = true))
+                            topicDraft = ""
+                            save()
+                        },
+                    ) { Text("Add") }
+
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = !saving,
+                        onClick = { load() },
+                    ) { Text("Reload") }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(
+                        modifier = Modifier.weight(1f),
+                        enabled = state.connected && state.auth.loggedIn && !state.notify && topics.any { it.enabled },
+                        onClick = {
+                            if (!saveBlocking()) {
+                                return@Button
+                            }
+                            val intent = Intent(context, NodeService::class.java).apply {
+                                action = NodeService.ACTION_START_NOTIFY
+                            }
+                            ContextCompat.startForegroundService(context, intent)
+                        },
+                    ) { Text("Start Notify") }
+
+                    OutlinedButton(
+                        modifier = Modifier.weight(1f),
+                        enabled = state.notify,
+                        onClick = {
+                            val intent = Intent(context, NodeService::class.java).apply {
+                                action = NodeService.ACTION_STOP_NOTIFY
+                            }
+                            ContextCompat.startForegroundService(context, intent)
+                        },
+                    ) { Text("Stop Notify") }
+                }
+            }
+        }
+
+        if (error.isNotBlank()) {
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
+                Text(
+                    error,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+
+        Card {
+            Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (topics.isEmpty()) {
+                    Text("No notify topics.", style = MaterialTheme.typography.bodySmall)
+                }
+                for ((index, item) in topics.withIndex()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            item.topic,
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodySmall,
+                            fontFamily = FontFamily.Monospace,
                         )
-                    } else {
-                        SettingsPage(
-                            bridge = bridge,
-                            state = state,
+                        Switch(
+                            checked = item.enabled,
+                            enabled = !saving,
+                            onCheckedChange = { checked ->
+                                topics[index] = item.copy(enabled = checked)
+                                save()
+                            },
                         )
+                        OutlinedButton(
+                            enabled = !saving,
+                            onClick = {
+                                topics.removeAt(index)
+                                save()
+                            },
+                        ) { Text("Remove") }
                     }
                 }
             }

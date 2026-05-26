@@ -11,10 +11,16 @@ import {
   Login,
   MetricsSettingsGet,
   MetricsSettingsSet,
+  DequeueNotifications,
+  NotifySettingsGet,
+  NotifySettingsSet,
   Register,
   StartReporting,
+  StartNotify,
   Status,
-  StopReporting
+  StopReporting,
+  StopNotify,
+  ShowNotification
 } from "../wailsjs/go/main/App"
 
 type StatusDTO = {
@@ -22,6 +28,7 @@ type StatusDTO = {
   connected?: boolean
   addr?: string
   reporting?: boolean
+  notify?: boolean
   auth?: {
     device_id?: string
     node_id?: number
@@ -43,11 +50,26 @@ type MetricSettingDTO = {
   writable: boolean
 }
 
+type NotifyTopicSettingDTO = {
+  topic: string
+  enabled: boolean
+}
+
+type NotificationEventDTO = {
+  id?: string
+  topic?: string
+  name?: string
+  title?: string
+  body?: string
+  ts?: number
+  payload?: any
+}
+
 const busy = ref(false)
 const pollMs = 1000
 let pollTimer: number | undefined
 
-const page = ref<"connect" | "settings">("connect")
+const page = ref<"connect" | "settings" | "notify">("connect")
 
 const form = reactive({
   addr: "",
@@ -60,6 +82,7 @@ const status = reactive<StatusDTO>({
   connected: false,
   addr: "",
   reporting: false,
+  notify: false,
   auth: {},
   metrics: {},
   last_error: ""
@@ -67,6 +90,7 @@ const status = reactive<StatusDTO>({
 
 const loggedIn = computed(() => Boolean(status.auth?.logged_in))
 const canReport = computed(() => loggedIn.value && Boolean(status.connected))
+const canNotify = computed(() => loggedIn.value && Boolean(status.connected))
 
 const settings = ref<MetricSettingDTO[]>([])
 const settingsLoaded = ref(false)
@@ -81,6 +105,14 @@ const varNameError = reactive<Record<string, string>>({})
 
 const controllableMetrics = new Set(["volume_percent", "volume_muted", "brightness_percent", "flashlight_enabled"])
 const isControllable = (metric: string) => controllableMetrics.has(String(metric ?? "").trim())
+
+const notifySettings = ref<NotifyTopicSettingDTO[]>([])
+const notifyLoaded = ref(false)
+const notifyBusy = ref(false)
+const notifySaving = ref(false)
+const notifyError = ref("")
+const notifyTopicDraft = ref("")
+const lastNotification = ref<NotificationEventDTO | null>(null)
 
 const isVarNameValid = (name: string) => {
   const trimmed = String(name ?? "").trim()
@@ -102,6 +134,7 @@ const refresh = async () => {
     status.connected = Boolean(st?.connected)
     status.addr = st?.addr ?? ""
     status.reporting = Boolean(st?.reporting)
+    status.notify = Boolean(st?.notify)
     status.auth = st?.auth ?? {}
     status.metrics = st?.metrics ?? {}
     status.last_error = st?.last_error ?? ""
@@ -110,6 +143,23 @@ const refresh = async () => {
     }
   } catch (err) {
     status.last_error = String(err ?? "status failed")
+  }
+}
+
+const pollNotifications = async () => {
+  try {
+    const list = (await DequeueNotifications()) as any
+    const events = (Array.isArray(list) ? list : []) as NotificationEventDTO[]
+    for (const evt of events) {
+      lastNotification.value = evt
+      try {
+        await ShowNotification(evt as any)
+      } catch (err) {
+        notifyError.value = String(err ?? "show notification failed")
+      }
+    }
+  } catch (err) {
+    notifyError.value = String(err ?? "dequeue notifications failed")
   }
 }
 
@@ -204,6 +254,105 @@ const stopReporting = async () => {
   busy.value = true
   try {
     await StopReporting()
+  } finally {
+    busy.value = false
+    await refresh()
+  }
+}
+
+const normalizeNotifyTopic = (topic: string) => String(topic ?? "").trim()
+
+const loadNotifySettings = async () => {
+  if (notifyBusy.value) return
+  notifyBusy.value = true
+  notifyError.value = ""
+  try {
+    const list = (await NotifySettingsGet()) as any
+    notifySettings.value = (Array.isArray(list) ? list : []) as any
+    notifyLoaded.value = true
+  } catch (err) {
+    notifyError.value = String(err ?? "load notify settings failed")
+  } finally {
+    notifyBusy.value = false
+  }
+}
+
+const validateNotifySettings = (): string | null => {
+  const seen = new Set<string>()
+  for (const item of notifySettings.value) {
+    const topic = normalizeNotifyTopic(item.topic)
+    if (!topic) return "topic is required"
+    if (topic.length > 256) return `topic too long: ${topic.slice(0, 32)}`
+    if (seen.has(topic)) return `duplicate topic: ${topic}`
+    seen.add(topic)
+  }
+  return null
+}
+
+const saveNotifySettings = async () => {
+  if (notifySaving.value) return
+  const err = validateNotifySettings()
+  if (err) {
+    notifyError.value = err
+    return
+  }
+  notifySaving.value = true
+  notifyError.value = ""
+  try {
+    notifySettings.value = notifySettings.value.map((item) => ({
+      topic: normalizeNotifyTopic(item.topic),
+      enabled: Boolean(item.enabled)
+    }))
+    await NotifySettingsSet(notifySettings.value as any)
+  } catch (saveErr) {
+    notifyError.value = String(saveErr ?? "save notify settings failed")
+  } finally {
+    notifySaving.value = false
+  }
+}
+
+const addNotifyTopic = async () => {
+  const topic = normalizeNotifyTopic(notifyTopicDraft.value)
+  if (!topic) {
+    notifyError.value = "topic is required"
+    return
+  }
+  if (notifySettings.value.some((item) => normalizeNotifyTopic(item.topic) === topic)) {
+    notifyError.value = `duplicate topic: ${topic}`
+    return
+  }
+  notifySettings.value.push({ topic, enabled: true })
+  notifyTopicDraft.value = ""
+  await saveNotifySettings()
+}
+
+const removeNotifyTopic = async (index: number) => {
+  notifySettings.value.splice(index, 1)
+  await saveNotifySettings()
+}
+
+const setNotifyEnabled = async (item: NotifyTopicSettingDTO, enabled: boolean) => {
+  item.enabled = enabled
+  await saveNotifySettings()
+}
+
+const startNotify = async () => {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await saveNotifySettings()
+    await StartNotify()
+  } finally {
+    busy.value = false
+    await refresh()
+  }
+}
+
+const stopNotify = async () => {
+  if (busy.value) return
+  busy.value = true
+  try {
+    await StopNotify()
   } finally {
     busy.value = false
     await refresh()
@@ -318,17 +467,23 @@ const commitVarName = (s: MetricSettingDTO) => {
   void saveSettings()
 }
 
-const switchPage = async (p: "connect" | "settings") => {
+const switchPage = async (p: "connect" | "settings" | "notify") => {
   page.value = p
   if (p === "settings" && !settingsLoaded.value) {
     await loadSettings()
+  }
+  if (p === "notify" && !notifyLoaded.value) {
+    await loadNotifySettings()
   }
 }
 
 onMounted(async () => {
   await loadBootstrap()
   await refresh()
-  pollTimer = window.setInterval(() => void refresh(), pollMs)
+  pollTimer = window.setInterval(() => {
+    void refresh()
+    void pollNotifications()
+  }, pollMs)
 })
 
 onBeforeUnmount(() => {
@@ -355,6 +510,9 @@ onBeforeUnmount(() => {
         <div class="pill" :class="status.reporting ? 'ok' : 'bad'">
           {{ status.reporting ? "Reporting" : "Stopped" }}
         </div>
+        <div class="pill" :class="status.notify ? 'ok' : 'bad'">
+          {{ status.notify ? "Notify" : "Notify Off" }}
+        </div>
       </div>
     </header>
 
@@ -364,6 +522,9 @@ onBeforeUnmount(() => {
       </button>
       <button class="tab" :class="page === 'settings' ? 'active' : ''" @click="switchPage('settings')">
         Settings
+      </button>
+      <button class="tab" :class="page === 'notify' ? 'active' : ''" @click="switchPage('notify')">
+        Notify
       </button>
       <div class="spacer"></div>
       <button class="btn secondary" :disabled="busy" @click="refresh">Refresh</button>
@@ -425,7 +586,7 @@ onBeforeUnmount(() => {
       </section>
     </template>
 
-    <section v-else class="card">
+    <section v-if="page === 'settings'" class="card">
       <div class="card-header">
         <h2>Metrics Settings</h2>
         <div class="row tight">
@@ -488,9 +649,78 @@ onBeforeUnmount(() => {
       </div>
     </section>
 
+    <section v-if="page === 'notify'" class="card">
+      <div class="card-header">
+        <h2>Notify Topics</h2>
+        <div class="row tight">
+          <button class="btn secondary" :disabled="notifyBusy" @click="loadNotifySettings">Reload</button>
+          <div class="pill" :class="notifySaving ? 'warn' : status.notify ? 'ok' : 'bad'">
+            {{ notifySaving ? "Saving..." : status.notify ? "Listening" : "Stopped" }}
+          </div>
+        </div>
+      </div>
+
+      <div class="grid notify-add">
+        <label>
+          Topic
+          <input
+            v-model="notifyTopicDraft"
+            class="input"
+            placeholder="dev/codex/task"
+            @keydown.enter.prevent="addNotifyTopic"
+          />
+        </label>
+      </div>
+
+      <div class="row">
+        <button class="btn" :disabled="notifySaving" @click="addNotifyTopic">Add Topic</button>
+        <button class="btn" :disabled="busy || !canNotify || status.notify || notifySettings.length === 0" @click="startNotify">
+          Start Listening
+        </button>
+        <button class="btn secondary" :disabled="busy || !status.notify" @click="stopNotify">Stop Notify</button>
+      </div>
+
+      <div class="table notify-table">
+        <div class="thead">
+          <div>Topic</div>
+          <div class="col-toggle">Enabled</div>
+          <div class="col-toggle">Action</div>
+        </div>
+        <div v-for="(item, index) in notifySettings" :key="item.topic" class="tr">
+          <div class="metric">{{ item.topic }}</div>
+          <div class="togglecell">
+            <label class="toggle">
+              <input
+                type="checkbox"
+                :checked="item.enabled"
+                :disabled="notifySaving"
+                @change="setNotifyEnabled(item, ($event.target as HTMLInputElement).checked)"
+              />
+              <span class="track"></span>
+            </label>
+          </div>
+          <div class="togglecell">
+            <button class="btn secondary" :disabled="notifySaving" @click="removeNotifyTopic(index)">Remove</button>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="lastNotification" class="kv notify-last">
+        <div><span>Last Topic</span><b>{{ lastNotification.topic || "-" }}</b></div>
+        <div><span>Last Name</span><b>{{ lastNotification.name || "-" }}</b></div>
+        <div class="wide"><span>Title</span><b>{{ lastNotification.title || "-" }}</b></div>
+        <div class="wide"><span>Body</span><b>{{ lastNotification.body || "-" }}</b></div>
+      </div>
+    </section>
+
     <section v-if="settingsError" class="card warn">
       <h2>Settings Error</h2>
       <pre class="pre">{{ settingsError }}</pre>
+    </section>
+
+    <section v-if="notifyError" class="card warn">
+      <h2>Notify Error</h2>
+      <pre class="pre">{{ notifyError }}</pre>
     </section>
 
     <section v-if="status.last_error" class="card warn">
@@ -629,9 +859,13 @@ label {
   cursor: not-allowed;
 }
 .pill {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
   padding: 6px 10px;
   border-radius: 999px;
   font-size: 12px;
+  white-space: nowrap;
   border: 1px solid rgba(255, 255, 255, 0.18);
 }
 .pill.ok {
@@ -678,6 +912,16 @@ label {
   grid-template-columns: 220px 1fr 120px 90px 90px;
   gap: 10px;
   align-items: start;
+}
+.notify-table .thead,
+.notify-table .tr {
+  grid-template-columns: 1fr 120px 120px;
+}
+.notify-add {
+  grid-template-columns: minmax(0, 1fr);
+}
+.notify-last {
+  margin-top: 16px;
 }
 .thead {
   font-size: 12px;

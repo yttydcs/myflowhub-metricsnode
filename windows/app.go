@@ -9,11 +9,13 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 
 	"github.com/yttydcs/myflowhub-metricsnode/core/configstore"
+	"github.com/yttydcs/myflowhub-metricsnode/core/notify"
 	"github.com/yttydcs/myflowhub-metricsnode/core/runtime"
 )
 
@@ -101,6 +103,7 @@ type StatusDTO struct {
 	Connected bool                 `json:"connected"`
 	Addr      string               `json:"addr"`
 	Reporting bool                 `json:"reporting"`
+	Notify    bool                 `json:"notify"`
 	Auth      runtime.AuthSnapshot `json:"auth"`
 	Metrics   map[string]string    `json:"metrics"`
 	LastError string               `json:"last_error"`
@@ -128,6 +131,7 @@ func (a *App) Status() StatusDTO {
 		Connected: rt.IsConnected(),
 		Addr:      strings.TrimSpace(addr),
 		Reporting: rt.IsReporting(),
+		Notify:    rt.IsNotifyRunning(),
 		Auth:      rt.AuthState(),
 		Metrics:   rt.MetricsSnapshot(),
 		LastError: rt.LastError(),
@@ -330,4 +334,93 @@ func (a *App) MetricsSettingsSet(settings []runtime.MetricSetting) error {
 		return err
 	}
 	return rt.RuntimeConfigSet(runtime.KeyMetricsSettingsJSON, string(encoded), 0)
+}
+
+func (a *App) NotifySettingsGet() ([]notify.TopicSetting, error) {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return nil, errors.New("runtime not initialized")
+	}
+	return rt.NotifySettingsGet(), nil
+}
+
+func (a *App) NotifySettingsSet(settings []notify.TopicSetting) error {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return errors.New("runtime not initialized")
+	}
+	return rt.NotifySettingsSet(settings)
+}
+
+func (a *App) StartNotify() error {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return errors.New("runtime not initialized")
+	}
+	return rt.StartNotify()
+}
+
+func (a *App) StopNotify() {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt != nil {
+		rt.StopNotify()
+	}
+}
+
+func (a *App) DequeueNotifications() ([]notify.Event, error) {
+	a.mu.Lock()
+	rt := a.rt
+	a.mu.Unlock()
+	if rt == nil {
+		return nil, errors.New("runtime not initialized")
+	}
+	return rt.DequeueNotifications(), nil
+}
+
+func (a *App) ShowNotification(evt notify.Event) error {
+	title := strings.TrimSpace(evt.Title)
+	body := strings.TrimSpace(evt.Body)
+	if title == "" {
+		title = "MyFlowHub Notify"
+	}
+	if body == "" {
+		body = strings.TrimSpace(evt.Topic)
+	}
+	if body == "" {
+		body = strings.TrimSpace(evt.Name)
+	}
+	if body == "" {
+		return errors.New("notification body is required")
+	}
+	script := `
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+$title = [string]$args[0]
+$body = [string]$args[1]
+$n = New-Object System.Windows.Forms.NotifyIcon
+$n.Icon = [System.Drawing.SystemIcons]::Information
+$n.BalloonTipTitle = $title
+$n.BalloonTipText = $body
+$n.Visible = $true
+$n.ShowBalloonTip(5000)
+Start-Sleep -Milliseconds 5500
+$n.Dispose()
+`
+	cmd := exec.Command("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-Command", script, title, body)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	go func() {
+		_ = cmd.Wait()
+	}()
+	return nil
 }

@@ -29,6 +29,7 @@ type statusDTO struct {
 	WorkDir   string               `json:"workdir,omitempty"`
 	Auth      runtime.AuthSnapshot `json:"auth,omitempty"`
 	Reporting bool                 `json:"reporting"`
+	Notify    bool                 `json:"notify"`
 	Metrics   map[string]string    `json:"metrics,omitempty"`
 	LastError string               `json:"last_error,omitempty"`
 }
@@ -82,6 +83,7 @@ func Stop() (string, error) {
 		return marshalStatus(nil), nil
 	}
 	r.StopReporting()
+	r.StopNotify()
 	r.Close()
 	return marshalStatus(nil), nil
 }
@@ -268,6 +270,33 @@ func StopReporting() (string, error) {
 	return marshalStatus(r), nil
 }
 
+func StartNotify() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return "", errors.New("runtime not started")
+	}
+	if err := r.StartNotify(); err != nil {
+		mu.Lock()
+		lastErr = err.Error()
+		mu.Unlock()
+		return "", err
+	}
+	return marshalStatus(r), nil
+}
+
+func StopNotify() (string, error) {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+	if r == nil {
+		return marshalStatus(nil), nil
+	}
+	r.StopNotify()
+	return marshalStatus(r), nil
+}
+
 // StopAll 保留给宿主侧的兼容入口，当前直接复用完整 Stop 流程。
 func StopAll() (string, error) {
 	return Stop()
@@ -322,6 +351,14 @@ func MetricsSettingsSet(value string) (string, error) {
 	return RuntimeConfigSet(runtime.KeyMetricsSettingsJSON, value)
 }
 
+func NotifySettingsGet() (string, error) {
+	return RuntimeConfigGet(runtime.KeyNotifyTopicsJSON)
+}
+
+func NotifySettingsSet(value string) (string, error) {
+	return RuntimeConfigSet(runtime.KeyNotifyTopicsJSON, value)
+}
+
 // StatusAuthSnapshot 导出当前登录态快照，便于宿主判断是否已有 node_id。
 func StatusAuthSnapshot() runtime.AuthSnapshot {
 	mu.Lock()
@@ -347,6 +384,7 @@ func Status() string {
 		WorkDir:   "",
 		Auth:      runtime.AuthSnapshot{},
 		Reporting: r != nil && r.IsReporting(),
+		Notify:    r != nil && r.IsNotifyRunning(),
 		Metrics:   map[string]string{},
 		LastError: strings.TrimSpace(errText),
 	}
@@ -354,6 +392,7 @@ func Status() string {
 		dto.Addr = r.LastAddr()
 		dto.WorkDir = r.WorkDir()
 		dto.Auth = r.AuthState()
+		dto.Notify = r.IsNotifyRunning()
 		dto.Metrics = r.MetricsSnapshot()
 		dto.LastError = strings.TrimSpace(r.LastError())
 	}
@@ -645,6 +684,19 @@ func DequeueActions() string {
 	return string(raw)
 }
 
+func DequeueNotifications() string {
+	mu.Lock()
+	r := rt
+	mu.Unlock()
+
+	if r == nil {
+		return "[]"
+	}
+	events := r.DequeueNotifications()
+	raw, _ := json.Marshal(events)
+	return string(raw)
+}
+
 // isTruthy 统一识别 bridge 里多处复用的布尔文本输入。
 func isTruthy(text string) bool {
 	v := strings.ToLower(strings.TrimSpace(text))
@@ -681,6 +733,7 @@ func marshalStatus(r *runtime.Runtime) string {
 		WorkDir:   r.WorkDir(),
 		Auth:      r.AuthState(),
 		Reporting: r.IsReporting(),
+		Notify:    r.IsNotifyRunning(),
 		Metrics:   r.MetricsSnapshot(),
 		LastError: strings.TrimSpace(r.LastError()),
 	}

@@ -26,6 +26,7 @@ import (
 	rtauth "github.com/yttydcs/myflowhub-metricsnode/core/auth"
 	"github.com/yttydcs/myflowhub-metricsnode/core/configstore"
 	"github.com/yttydcs/myflowhub-metricsnode/core/metrics"
+	"github.com/yttydcs/myflowhub-metricsnode/core/notify"
 	rtvar "github.com/yttydcs/myflowhub-metricsnode/core/varstore"
 )
 
@@ -79,6 +80,11 @@ type Runtime struct {
 	lastPublished map[string]publishedVar
 
 	controlQ *actionQueue
+
+	notifyMu      sync.RWMutex
+	notifyRunning atomic.Bool
+	notifyTopics  map[string]struct{}
+	notifyQ       *notify.Queue
 }
 
 func New(workDir string, log *slog.Logger) (*Runtime, error) {
@@ -104,6 +110,7 @@ func New(workDir string, log *slog.Logger) (*Runtime, error) {
 	}
 	rt.cfgCh = make(chan struct{})
 	rt.controlQ = newActionQueue()
+	rt.notifyQ = notify.NewQueue(notify.DefaultQueueCapacity)
 	rt.keys = rtauth.NewKeyStore(filepath.Join(abs, "node_keys.json"))
 	_ = rt.loadAuthSnapshot()
 	if err := rt.initRuntimeConfig(); err != nil {
@@ -185,6 +192,9 @@ func (r *Runtime) onUnmatchedFrame(hdr core.IHeader, payload []byte) {
 	if r.tryHandleManagementFrame(hdr, payload) {
 		return
 	}
+	if r.tryHandleTopicBusFrame(hdr, payload) {
+		return
+	}
 	if r.log == nil || !r.log.Enabled(context.Background(), slog.LevelDebug) {
 		return
 	}
@@ -255,6 +265,11 @@ func (r *Runtime) Connect(addr string) error {
 	if r.log != nil {
 		r.log.Info("client connected", "addr", addr)
 	}
+	if r.IsNotifyRunning() {
+		if err := r.subscribeNotifyTopics(); err != nil && r.log != nil {
+			r.log.Warn("notify resubscribe after connect failed", "err", err.Error())
+		}
+	}
 	return nil
 }
 
@@ -263,6 +278,7 @@ func (r *Runtime) Close() {
 		return
 	}
 	r.StopReporting()
+	r.StopNotify()
 	r.clientMu.Lock()
 	c := r.client
 	r.client = nil
@@ -457,6 +473,11 @@ func (r *Runtime) Login(deviceID string, nodeID uint32) (protoauth.RespData, err
 	r.setAuthSnapshot(protoauth.ActionLoginResp, deviceID, data)
 	if err := r.saveAuthSnapshot(r.AuthState()); err != nil {
 		r.storeLastError(err)
+	}
+	if r.IsNotifyRunning() {
+		if err := r.subscribeNotifyTopics(); err != nil && r.log != nil {
+			r.log.Warn("notify resubscribe after login failed", "err", err.Error())
+		}
 	}
 
 	return data, nil

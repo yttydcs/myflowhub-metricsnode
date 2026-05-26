@@ -19,6 +19,7 @@ export namespace main {
 	    connected: boolean;
 	    addr: string;
 	    reporting: boolean;
+	    notify: boolean;
 	    auth: runtime.AuthSnapshot;
 	    metrics: Record<string, string>;
 	    last_error: string;
@@ -33,6 +34,7 @@ export namespace main {
 	        this.connected = source["connected"];
 	        this.addr = source["addr"];
 	        this.reporting = source["reporting"];
+	        this.notify = source["notify"];
 	        this.auth = this.convertValues(source["auth"], runtime.AuthSnapshot);
 	        this.metrics = source["metrics"];
 	        this.last_error = source["last_error"];
@@ -55,6 +57,49 @@ export namespace main {
 		    }
 		    return a;
 		}
+	}
+
+}
+
+export namespace notify {
+
+	export class Event {
+	    id: string;
+	    topic: string;
+	    name: string;
+	    title: string;
+	    body: string;
+	    ts: number;
+	    payload?: number[];
+
+	    static createFrom(source: any = {}) {
+	        return new Event(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.topic = source["topic"];
+	        this.name = source["name"];
+	        this.title = source["title"];
+	        this.body = source["body"];
+	        this.ts = source["ts"];
+	        this.payload = source["payload"];
+	    }
+	}
+	export class TopicSetting {
+	    topic: string;
+	    enabled: boolean;
+
+	    static createFrom(source: any = {}) {
+	        return new TopicSetting(source);
+	    }
+
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.topic = source["topic"];
+	        this.enabled = source["enabled"];
+	    }
 	}
 
 }
@@ -107,4 +152,3 @@ export namespace runtime {
 	}
 
 }
-

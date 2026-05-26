@@ -54,6 +54,9 @@ class NodeService : Service() {
     private var systemRunning = false
 
     @Volatile
+    private var notifyRunning = false
+
+    @Volatile
     private var cpuMetricEnabled = true
 
     @Volatile
@@ -68,6 +71,7 @@ class NodeService : Service() {
     private var brightnessThread: Thread? = null
     private var systemThread: Thread? = null
     private var settingsThread: Thread? = null
+    private var notifyThread: Thread? = null
 
     private var cameraManager: CameraManager? = null
     private var torchCallback: CameraManager.TorchCallback? = null
@@ -183,8 +187,47 @@ class NodeService : Service() {
                     }
                 }.start()
             }
+            ACTION_START_NOTIFY -> {
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Starting notify…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.startNotify()
+                    if (st.notify) {
+                        startNotifyPoller()
+                    } else {
+                        stopNotifyPoller()
+                    }
+                    startForegroundWithState(
+                        when {
+                            st.reporting -> "Running"
+                            st.connected -> "Connected"
+                            else -> "Disconnected"
+                        }
+                    )
+                }.start()
+            }
+            ACTION_STOP_NOTIFY -> {
+                val workDir = File(filesDir, "metricsnode").absolutePath
+
+                startForegroundWithState("Stopping notify…")
+                Thread {
+                    bridge.init(workDir)
+                    val st = bridge.stopNotify()
+                    stopNotifyPoller()
+                    startForegroundWithState(
+                        when {
+                            st.reporting -> "Running"
+                            st.connected -> "Connected"
+                            else -> "Disconnected"
+                        }
+                    )
+                }.start()
+            }
             ACTION_STOP_ALL -> {
                 stopObservers()
+                stopNotifyPoller()
                 running = false
                 bridge.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -213,6 +256,7 @@ class NodeService : Service() {
             }
             ACTION_STOP -> {
                 stopObservers()
+                stopNotifyPoller()
                 running = false
                 bridge.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -227,6 +271,7 @@ class NodeService : Service() {
 
     override fun onDestroy() {
         stopObservers()
+        stopNotifyPoller()
         super.onDestroy()
     }
 
@@ -652,6 +697,54 @@ class NodeService : Service() {
         runCatching { t.join(1200) }
     }
 
+    private fun startNotifyPoller() {
+        if (notifyThread != null) {
+            return
+        }
+        notifyRunning = true
+        val t = Thread {
+            while (notifyRunning) {
+                val events = bridge.dequeueNotifications()
+                if (events.isNotEmpty()) {
+                    for (event in events) {
+                        postUserNotification(event)
+                    }
+                }
+                Thread.sleep(500)
+            }
+        }
+        t.isDaemon = true
+        t.start()
+        notifyThread = t
+    }
+
+    private fun stopNotifyPoller() {
+        notifyRunning = false
+        val t = notifyThread ?: return
+        notifyThread = null
+        runCatching { t.join(1200) }
+    }
+
+    private fun postUserNotification(event: NotifyEvent) {
+        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            return
+        }
+        createNotifyChannelIfNeeded()
+        val title = event.title.ifBlank { event.name.ifBlank { "MyFlowHub Notify" } }
+        val body = event.body.ifBlank { event.topic }
+        val notification = NotificationCompat.Builder(this, NOTIFY_CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(body))
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setAutoCancel(true)
+            .build()
+        val idSeed = event.id.ifBlank { "${event.topic}:${event.name}:${event.ts}" }
+        val notificationId = NOTIFY_ID_BASE + (idSeed.hashCode() and 0x3fff)
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        nm.notify(notificationId, notification)
+    }
+
     private fun applyControlActions(audio: AudioManager, actions: List<NodeAction>) {
         var volumePercent: NodeAction? = null
         var muted: NodeAction? = null
@@ -759,6 +852,22 @@ class NodeService : Service() {
         nm.createNotificationChannel(ch)
     }
 
+    private fun createNotifyChannelIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return
+        }
+        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        if (nm.getNotificationChannel(NOTIFY_CHANNEL_ID) != null) {
+            return
+        }
+        val ch = NotificationChannel(
+            NOTIFY_CHANNEL_ID,
+            "MyFlowHub Notify",
+            NotificationManager.IMPORTANCE_DEFAULT,
+        )
+        nm.createNotificationChannel(ch)
+    }
+
     companion object {
         const val ACTION_CONNECT = "com.myflowhub.metricsnode.action.CONNECT"
         const val ACTION_DISCONNECT = "com.myflowhub.metricsnode.action.DISCONNECT"
@@ -766,6 +875,8 @@ class NodeService : Service() {
         const val ACTION_LOGIN = "com.myflowhub.metricsnode.action.LOGIN"
         const val ACTION_START_REPORTING = "com.myflowhub.metricsnode.action.START_REPORTING"
         const val ACTION_STOP_REPORTING = "com.myflowhub.metricsnode.action.STOP_REPORTING"
+        const val ACTION_START_NOTIFY = "com.myflowhub.metricsnode.action.START_NOTIFY"
+        const val ACTION_STOP_NOTIFY = "com.myflowhub.metricsnode.action.STOP_NOTIFY"
         const val ACTION_STOP_ALL = "com.myflowhub.metricsnode.action.STOP_ALL"
 
         // Backward-compatible legacy actions.
@@ -777,7 +888,9 @@ class NodeService : Service() {
         const val EXTRA_NODE_ID = "node_id"
 
         private const val CHANNEL_ID = "myflowhub_metricsnode"
+        private const val NOTIFY_CHANNEL_ID = "myflowhub_notify"
         private const val NOTIFICATION_ID = 1
+        private const val NOTIFY_ID_BASE = 1000
     }
 }
 

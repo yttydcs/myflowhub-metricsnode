@@ -14,6 +14,7 @@ import (
 
 	"github.com/yttydcs/myflowhub-metricsnode/core/configstore"
 	"github.com/yttydcs/myflowhub-metricsnode/core/metrics"
+	"github.com/yttydcs/myflowhub-metricsnode/core/notify"
 	rtvar "github.com/yttydcs/myflowhub-metricsnode/core/varstore"
 )
 
@@ -22,6 +23,7 @@ const (
 	KeyMetricsSettingsJSON      = "metrics.settings_json"
 	KeyMetricsVisibilityDefault = "metrics.visibility_default"
 	KeyMetricsBatteryNoBattery  = "metrics.battery.no_battery_value"
+	KeyNotifyTopicsJSON         = "notify.topics_json"
 
 	defaultNoBatteryValue = "-1"
 )
@@ -57,6 +59,7 @@ type runtimeConfig struct {
 	BindingByVarName  map[string]varBinding
 	VisibilityDefault string
 	NoBatteryValue    string
+	NotifySettings    []notify.TopicSetting
 }
 
 func defaultBindings() []Binding {
@@ -352,6 +355,7 @@ func (r *Runtime) initRuntimeConfig() error {
 		KeyMetricsBindingsJSON:      defaultBindingsJSON(),
 		KeyMetricsVisibilityDefault: protovar.VisibilityPublic,
 		KeyMetricsBatteryNoBattery:  defaultNoBatteryValue,
+		KeyNotifyTopicsJSON:         notify.DefaultSettingsJSON(),
 	}
 	store, err := configstore.New(path, defaults, r.log)
 	if err != nil {
@@ -430,6 +434,13 @@ func (r *Runtime) RuntimeConfigSet(key, value string, sourceNode uint32) error {
 		if _, err := normalizeNoBatteryValue(value); err != nil {
 			return err
 		}
+	case KeyNotifyTopicsJSON:
+		settings, err := notify.ParseSettingsJSON(value)
+		if err != nil {
+			return err
+		}
+		normalized, _ := json.Marshal(settings)
+		value = string(normalized)
 	}
 
 	if err := r.cfgStore.Set(key, value); err != nil {
@@ -511,6 +522,16 @@ func (r *Runtime) reloadRuntimeConfig(reasonKey, _ string) {
 	if err != nil {
 		noBat = defaultNoBatteryValue
 	}
+	notifyRaw, _ := r.cfgStore.Get(KeyNotifyTopicsJSON)
+	notifySettings, err := notify.ParseSettingsJSON(notifyRaw)
+	if err != nil {
+		if r.log != nil {
+			r.log.Warn("invalid notify.topics_json; fallback", "err", err.Error())
+		}
+		notifySettings = []notify.TopicSetting{}
+	}
+	normalizedNotifyRaw, _ := json.Marshal(notifySettings)
+	r.storeSetIfChanged(KeyNotifyTopicsJSON, string(normalizedNotifyRaw))
 
 	enabledByMetric := make(map[string]bool, len(settings))
 	bindingByVarName := make(map[string]varBinding, len(bindings))
@@ -530,14 +551,22 @@ func (r *Runtime) reloadRuntimeConfig(reasonKey, _ string) {
 		BindingByVarName:  bindingByVarName,
 		VisibilityDefault: vis,
 		NoBatteryValue:    noBat,
+		NotifySettings:    notifySettings,
 	}
 	r.cfgMu.Unlock()
 	r.signalConfigChanged()
 
 	if r.log != nil {
-		r.log.Debug("runtime config applied", "reason", reasonKey, "bindings", len(bindings), "visibility", vis)
+		r.log.Debug("runtime config applied", "reason", reasonKey, "bindings", len(bindings), "visibility", vis, "notify_topics", len(notify.EnabledTopics(notifySettings)))
 	}
 	r.republishFromConfig()
+	if reasonKey == KeyNotifyTopicsJSON && r.IsNotifyRunning() {
+		if len(notify.EnabledTopics(notifySettings)) == 0 {
+			r.StopNotify()
+		} else if err := r.subscribeNotifyTopics(); err != nil && r.log != nil {
+			r.log.Warn("notify resubscribe after config failed", "err", err.Error())
+		}
+	}
 }
 
 func validateDerivedBindings(settings []MetricSetting) []Binding {
@@ -555,6 +584,11 @@ func (r *Runtime) configSnapshot() runtimeConfig {
 		copied := make([]Binding, len(cfg.Bindings))
 		copy(copied, cfg.Bindings)
 		cfg.Bindings = copied
+	}
+	if len(cfg.NotifySettings) > 0 {
+		copied := make([]notify.TopicSetting, len(cfg.NotifySettings))
+		copy(copied, cfg.NotifySettings)
+		cfg.NotifySettings = copied
 	}
 	r.cfgMu.RUnlock()
 	return cfg

@@ -22,6 +22,20 @@ data class MetricSetting(
     val writable: Boolean,
 )
 
+data class NotifyTopicSetting(
+    val topic: String,
+    val enabled: Boolean,
+)
+
+data class NotifyEvent(
+    val id: String,
+    val topic: String,
+    val name: String,
+    val title: String,
+    val body: String,
+    val ts: Long,
+)
+
 internal object NodeActionJson {
     fun parseList(raw: String): List<NodeAction> {
         return try {
@@ -88,6 +102,70 @@ internal object MetricSettingJson {
     }
 }
 
+internal object NotifyTopicSettingJson {
+    fun parseList(raw: String): List<NotifyTopicSetting> {
+        return try {
+            val arr = JSONArray(raw)
+            val out = ArrayList<NotifyTopicSetting>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val topic = obj.optString("topic", "").trim()
+                if (topic.isEmpty()) continue
+                out.add(NotifyTopicSetting(topic = topic, enabled = obj.optBoolean("enabled", false)))
+            }
+            out
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+
+    fun toJson(settings: List<NotifyTopicSetting>): String {
+        return try {
+            val arr = JSONArray()
+            for (s in settings) {
+                val topic = s.topic.trim()
+                if (topic.isEmpty()) continue
+                val obj = org.json.JSONObject()
+                obj.put("topic", topic)
+                obj.put("enabled", s.enabled)
+                arr.put(obj)
+            }
+            arr.toString()
+        } catch (_: Throwable) {
+            "[]"
+        }
+    }
+}
+
+internal object NotifyEventJson {
+    fun parseList(raw: String): List<NotifyEvent> {
+        return try {
+            val arr = JSONArray(raw)
+            val out = ArrayList<NotifyEvent>(arr.length())
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                val topic = obj.optString("topic", "").trim()
+                val title = obj.optString("title", "").trim()
+                val body = obj.optString("body", "").trim()
+                if (topic.isEmpty() || (title.isEmpty() && body.isEmpty())) continue
+                out.add(
+                    NotifyEvent(
+                        id = obj.optString("id", "").trim(),
+                        topic = topic,
+                        name = obj.optString("name", "").trim(),
+                        title = title,
+                        body = body,
+                        ts = obj.optLong("ts", 0L),
+                    )
+                )
+            }
+            out
+        } catch (_: Throwable) {
+            emptyList()
+        }
+    }
+}
+
 interface NodeBridge {
     fun init(workDir: String): NodeState
     fun connect(addr: String): NodeState
@@ -104,6 +182,10 @@ interface NodeBridge {
 
     fun metricsSettingsGet(): String
     fun metricsSettingsSet(raw: String): NodeState
+    fun notifySettingsGet(): String
+    fun notifySettingsSet(raw: String): NodeState
+    fun startNotify(): NodeState
+    fun stopNotify(): NodeState
 
     fun updateBatteryPercent(percent: Int)
     fun updateBatteryCharging(charging: Int)
@@ -117,6 +199,7 @@ interface NodeBridge {
     fun updateFlashlightEnabled(enabled: Int)
 
     fun dequeueActions(): List<NodeAction>
+    fun dequeueNotifications(): List<NotifyEvent>
 }
 
 class StubNodeBridge(
@@ -160,6 +243,14 @@ class StubNodeBridge(
 
     override fun metricsSettingsSet(raw: String): NodeState = state
 
+    override fun notifySettingsGet(): String = "[]"
+
+    override fun notifySettingsSet(raw: String): NodeState = state
+
+    override fun startNotify(): NodeState = state
+
+    override fun stopNotify(): NodeState = state
+
     override fun updateBatteryPercent(percent: Int) {}
 
     override fun updateBatteryCharging(charging: Int) {}
@@ -181,6 +272,8 @@ class StubNodeBridge(
     override fun updateFlashlightEnabled(enabled: Int) {}
 
     override fun dequeueActions(): List<NodeAction> = emptyList()
+
+    override fun dequeueNotifications(): List<NotifyEvent> = emptyList()
 }
 
 class GoNodeBridge : NodeBridge {
@@ -200,6 +293,10 @@ class GoNodeBridge : NodeBridge {
     private val statusMethod: Method
     private val metricsSettingsGetMethod: Method
     private val metricsSettingsSetMethod: Method
+    private val notifySettingsGetMethod: Method?
+    private val notifySettingsSetMethod: Method?
+    private val startNotifyMethod: Method?
+    private val stopNotifyMethod: Method?
 
     private val updateBatteryMethod: Method
     private val updateBatteryChargingMethod: Method?
@@ -213,6 +310,7 @@ class GoNodeBridge : NodeBridge {
     private val updateMemPercentMethod: Method?
     private val updateFlashlightEnabledMethod: Method?
     private val dequeueActionsMethod: Method
+    private val dequeueNotificationsMethod: Method?
 
     init {
         cls = GomobileLoader.loadNodeClass()
@@ -230,6 +328,10 @@ class GoNodeBridge : NodeBridge {
         statusMethod = GoReflect.method(cls, "Status")
         metricsSettingsGetMethod = GoReflect.method(cls, "MetricsSettingsGet")
         metricsSettingsSetMethod = GoReflect.method(cls, "MetricsSettingsSet", String::class.java)
+        notifySettingsGetMethod = runCatching { GoReflect.method(cls, "NotifySettingsGet") }.getOrNull()
+        notifySettingsSetMethod = runCatching { GoReflect.method(cls, "NotifySettingsSet", String::class.java) }.getOrNull()
+        startNotifyMethod = runCatching { GoReflect.method(cls, "StartNotify") }.getOrNull()
+        stopNotifyMethod = runCatching { GoReflect.method(cls, "StopNotify") }.getOrNull()
 
         updateBatteryMethod = GoReflect.method(cls, "UpdateBatteryPercent", String::class.java)
         updateBatteryChargingMethod = runCatching { GoReflect.method(cls, "UpdateBatteryCharging", String::class.java) }.getOrNull()
@@ -243,6 +345,7 @@ class GoNodeBridge : NodeBridge {
         updateMemPercentMethod = runCatching { GoReflect.method(cls, "UpdateMemPercent", String::class.java) }.getOrNull()
         updateFlashlightEnabledMethod = runCatching { GoReflect.method(cls, "UpdateFlashlightEnabled", String::class.java) }.getOrNull()
         dequeueActionsMethod = GoReflect.method(cls, "DequeueActions")
+        dequeueNotificationsMethod = runCatching { GoReflect.method(cls, "DequeueNotifications") }.getOrNull()
 
         // Optional probe to help diagnose missing AAR in runtime.
         runCatching { GoReflect.method(cls, "EnsureLinked").invoke(null) }
@@ -286,6 +389,26 @@ class GoNodeBridge : NodeBridge {
 
     override fun metricsSettingsSet(raw: String): NodeState =
         call { metricsSettingsSetMethod.invoke(null, raw) as String }
+
+    override fun notifySettingsGet(): String {
+        val method = notifySettingsGetMethod ?: return "[]"
+        return callRaw { method.invoke(null) as String }
+    }
+
+    override fun notifySettingsSet(raw: String): NodeState {
+        val method = notifySettingsSetMethod ?: return NodeState(running = true, lastError = "notify settings bridge unavailable")
+        return call { method.invoke(null, raw) as String }
+    }
+
+    override fun startNotify(): NodeState {
+        val method = startNotifyMethod ?: return NodeState(running = true, lastError = "notify bridge unavailable")
+        return call { method.invoke(null) as String }
+    }
+
+    override fun stopNotify(): NodeState {
+        val method = stopNotifyMethod ?: return status()
+        return call { method.invoke(null) as String }
+    }
 
     override fun updateBatteryPercent(percent: Int) {
         val text = if (percent < 0) "-1" else percent.toString()
@@ -349,6 +472,12 @@ class GoNodeBridge : NodeBridge {
     override fun dequeueActions(): List<NodeAction> {
         val raw = runCatching { dequeueActionsMethod.invoke(null) as String }.getOrNull() ?: return emptyList()
         return NodeActionJson.parseList(raw)
+    }
+
+    override fun dequeueNotifications(): List<NotifyEvent> {
+        val method = dequeueNotificationsMethod ?: return emptyList()
+        val raw = runCatching { method.invoke(null) as String }.getOrNull() ?: return emptyList()
+        return NotifyEventJson.parseList(raw)
     }
 
     private fun call(fn: () -> String): NodeState {
