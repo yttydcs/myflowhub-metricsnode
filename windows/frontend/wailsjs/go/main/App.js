@@ -42,6 +42,14 @@ export function MetricsSettingsSet(arg1) {
   return window['go']['main']['App']['MetricsSettingsSet'](arg1);
 }
 
+export function NotifyPresenterGet() {
+  return window['go']['main']['App']['NotifyPresenterGet']();
+}
+
+export function NotifyPresenterSet(arg1) {
+  return window['go']['main']['App']['NotifyPresenterSet'](arg1);
+}
+
 export function NotifySettingsGet() {
   return window['go']['main']['App']['NotifySettingsGet']();
 }

@@ -14,6 +14,8 @@ import {
   DequeueNotifications,
   NotifySettingsGet,
   NotifySettingsSet,
+  NotifyPresenterGet,
+  NotifyPresenterSet,
   Register,
   StartReporting,
   StartNotify,
@@ -112,6 +114,7 @@ const notifyBusy = ref(false)
 const notifySaving = ref(false)
 const notifyError = ref("")
 const notifyTopicDraft = ref("")
+const notifyPresenter = ref<"script" | "toast">("script")
 const lastNotification = ref<NotificationEventDTO | null>(null)
 
 const isVarNameValid = (name: string) => {
@@ -261,14 +264,17 @@ const stopReporting = async () => {
 }
 
 const normalizeNotifyTopic = (topic: string) => String(topic ?? "").trim()
+const normalizeNotifyPresenter = (mode: unknown): "script" | "toast" =>
+  String(mode ?? "").trim().toLowerCase() === "toast" ? "toast" : "script"
 
 const loadNotifySettings = async () => {
   if (notifyBusy.value) return
   notifyBusy.value = true
   notifyError.value = ""
   try {
-    const list = (await NotifySettingsGet()) as any
+    const [list, presenter] = await Promise.all([NotifySettingsGet() as any, NotifyPresenterGet() as any])
     notifySettings.value = (Array.isArray(list) ? list : []) as any
+    notifyPresenter.value = normalizeNotifyPresenter(presenter)
     notifyLoaded.value = true
   } catch (err) {
     notifyError.value = String(err ?? "load notify settings failed")
@@ -334,6 +340,21 @@ const removeNotifyTopic = async (index: number) => {
 const setNotifyEnabled = async (item: NotifyTopicSettingDTO, enabled: boolean) => {
   item.enabled = enabled
   await saveNotifySettings()
+}
+
+const setNotifyPresenter = async (mode: Event) => {
+  const target = mode.target as HTMLSelectElement
+  const next = normalizeNotifyPresenter(target?.value)
+  notifyPresenter.value = next
+  notifySaving.value = true
+  notifyError.value = ""
+  try {
+    await NotifyPresenterSet(next)
+  } catch (err) {
+    notifyError.value = String(err ?? "save notify presenter failed")
+  } finally {
+    notifySaving.value = false
+  }
 }
 
 const startNotify = async () => {
@@ -670,6 +691,13 @@ onBeforeUnmount(() => {
             @keydown.enter.prevent="addNotifyTopic"
           />
         </label>
+        <label>
+          Notification Mode
+          <select class="input" :value="notifyPresenter" :disabled="notifySaving" @change="setNotifyPresenter">
+            <option value="script">Script Balloon</option>
+            <option value="toast">Windows Toast</option>
+          </select>
+        </label>
       </div>
 
       <div class="row">
@@ -918,7 +946,7 @@ label {
   grid-template-columns: 1fr 120px 120px;
 }
 .notify-add {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) 220px;
 }
 .notify-last {
   margin-top: 16px;

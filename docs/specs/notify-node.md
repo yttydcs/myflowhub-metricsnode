@@ -78,7 +78,9 @@ Windows:
 
 - Wails app exposes notify settings/start/stop/dequeue methods.
 - Vue UI polls queued events and invokes the Wails `ShowNotification` bridge.
-- The Windows bridge displays a system tray balloon through PowerShell and `System.Windows.Forms.NotifyIcon`.
+- `notify.presenter` is stored in Windows bootstrap config and accepts:
+  - `script`: default legacy mode; displays a system tray balloon through PowerShell and `System.Windows.Forms.NotifyIcon`.
+  - `toast`: Windows Toast mode; registers local app metadata through `go-toast`, writes the embedded app logo to the local config assets directory, and pushes a ToastGeneric notification with that logo as `appLogoOverride`.
 - Notification bridge errors are surfaced in UI state while the runtime stays connected.
 
 Android:

@@ -103,7 +103,6 @@ export namespace notify {
 	}
 
 }
-
 export namespace runtime {
 	
 	export class AuthSnapshot {

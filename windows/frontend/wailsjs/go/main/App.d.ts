@@ -24,6 +24,10 @@ export function MetricsSettingsGet():Promise<Array<runtime.MetricSetting>>;
 
 export function MetricsSettingsSet(arg1:Array<runtime.MetricSetting>):Promise<void>;
 
+export function NotifyPresenterGet():Promise<string>;
+
+export function NotifyPresenterSet(arg1:string):Promise<void>;
+
 export function NotifySettingsGet():Promise<Array<notify.TopicSetting>>;
 
 export function NotifySettingsSet(arg1:Array<notify.TopicSetting>):Promise<void>;
