@@ -62,7 +62,7 @@ export namespace main {
 }
 
 export namespace notify {
-
+	
 	export class Event {
 	    id: string;
 	    topic: string;
@@ -71,11 +71,11 @@ export namespace notify {
 	    body: string;
 	    ts: number;
 	    payload?: number[];
-
+	
 	    static createFrom(source: any = {}) {
 	        return new Event(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.id = source["id"];
@@ -90,11 +90,11 @@ export namespace notify {
 	export class TopicSetting {
 	    topic: string;
 	    enabled: boolean;
-
+	
 	    static createFrom(source: any = {}) {
 	        return new TopicSetting(source);
 	    }
-
+	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.topic = source["topic"];
@@ -103,6 +103,7 @@ export namespace notify {
 	}
 
 }
+
 export namespace runtime {
 	
 	export class AuthSnapshot {
@@ -151,3 +152,4 @@ export namespace runtime {
 	}
 
 }
+
