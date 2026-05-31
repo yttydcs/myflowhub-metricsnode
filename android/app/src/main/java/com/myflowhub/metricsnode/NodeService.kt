@@ -24,6 +24,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.provider.Settings
+import android.media.RingtoneManager
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.io.File
@@ -738,6 +739,9 @@ class NodeService : Service() {
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setSmallIcon(android.R.drawable.stat_notify_chat)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setDefaults(NotificationCompat.DEFAULT_SOUND or NotificationCompat.DEFAULT_VIBRATE)
+            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setAutoCancel(true)
             .build()
         val idSeed = event.id.ifBlank { "${event.topic}:${event.name}:${event.ts}" }
@@ -866,6 +870,12 @@ class NodeService : Service() {
             "MyFlowHub Notify",
             NotificationManager.IMPORTANCE_HIGH,
         )
+        ch.enableVibration(true)
+        ch.vibrationPattern = longArrayOf(0, 250, 120, 250)
+        ch.setSound(
+            RingtoneManager.getDefaultUri(RingtoneManager.TYPE_NOTIFICATION),
+            Notification.AUDIO_ATTRIBUTES_DEFAULT,
+        )
         nm.createNotificationChannel(ch)
     }
 
@@ -889,7 +899,7 @@ class NodeService : Service() {
         const val EXTRA_NODE_ID = "node_id"
 
         private const val CHANNEL_ID = "myflowhub_metricsnode"
-        private const val NOTIFY_CHANNEL_ID = "myflowhub_notify_v2"
+        private const val NOTIFY_CHANNEL_ID = "myflowhub_notify_v3"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFY_ID_BASE = 1000
     }

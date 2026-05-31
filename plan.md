@@ -1,142 +1,125 @@
-# Android FGS and Notification Behavior Fix Plan
+# Android Notify Heads-Up Channel Follow-Up Plan
 
 ## Project Goal
 
-Fix two Android-only MetricsNode issues:
-
-- Fresh install, entering hub address and tapping Connect crashes on Android 14 / targetSdk 34.
-- NotifyNode user messages go directly to the notification drawer instead of showing as heads-up notifications when the runtime environment allows it.
-
-Windows behavior is out of scope and must remain unchanged.
+Make Android NotifyNode user notifications more likely to appear as heads-up notifications after the first FGS crash fix, while keeping the foreground service status notification quiet.
 
 ## Current State
 
 - Repo: `D:/project/MyFlowHub3/repo/MyFlowHub-MetricsNode`
-- Active worktree: `D:/project/MyFlowHub3/worktrees/android-fgs-notification-behavior`
-- Branch: `fix/android-fgs-notification-behavior`
+- Active worktree: `D:/project/MyFlowHub3/worktrees/android-notify-heads-up-channel`
+- Branch: `fix/android-notify-heads-up-channel`
 - Base branch: `main`
-- Base commit: `0a875422ce1c1bf8f83e28d97c0b49d6a5bc3601`
+- Base commit: `72ef23518d0a80cb81a72d44df524ae89a4d5cf9`
 - Current stage: `4`
 
 ## Stage 1 - Requirements Analysis
 
 ### Goal
 
-Make Android connect/start behavior stable on fresh installs and make NotifyNode user notifications interruptive enough for heads-up display where Android settings permit it.
+Android NotifyNode notifications should request interruptive notification behavior using platform-supported notification channel and notification attributes.
 
 ### Scope
 
 Must:
 
-- Prevent `ACTION_CONNECT` from starting a foreground service with the `camera` runtime foreground service type.
-- Keep Android foreground service status notification separate from NotifyNode user notifications.
-- Keep NotifyNode connected/subscribed behavior independent from notification display failure.
-- Preserve Windows behavior and shared Go runtime behavior.
-
-Optional:
-
-- Add a reusable troubleshooting lesson for Android 14 foreground service type crashes and notification channel importance.
+- Keep foreground service status notification low importance.
+- Keep NotifyNode user notifications separate from foreground service status notification.
+- Make NotifyNode channel high importance with explicit alert behavior.
+- Preserve runtime behavior when notification permission is denied.
 
 Not doing:
 
 - TopicBus protocol changes.
-- Go runtime notification queue changes.
-- New Android permission UX for camera / flashlight.
-- Full-screen intent notifications.
-- OEM-specific notification policy bypass.
+- Go runtime queue changes.
+- Full-screen intent or alarm/call-style notification behavior.
+- OEM-specific private APIs.
 
 ### Use Cases
 
-- User installs Android app, enters hub address, taps Connect, and the app stays alive while the service connects.
-- User receives a matching NotifyNode TopicBus publish and Android shows a heads-up notification if `POST_NOTIFICATIONS` is granted, the channel is high importance, and system/user settings allow interruption.
+- Android user receives a NotifyNode event while the device permits heads-up notifications and sees a banner/pop-up instead of only a drawer entry.
 
 ### Functional Requirements
 
-- Connect/register/login/reporting/notify service state updates must not require camera foreground service eligibility.
-- NotifyNode user notifications must be posted on a high-importance channel.
-- Existing notification permission denial behavior remains best-effort: no crash, no session teardown.
+- NotifyNode user channel must be created with high importance.
+- Channel must explicitly enable vibration and default notification sound.
+- Notification must mark itself as a high-priority message notification.
+- Existing old channel settings must not block this attempt.
 
 ### Non-Functional Requirements
 
-- Smallest safe Android-only change.
-- No unnecessary I/O or repeated computation.
-- Explicit handling for existing notification channel behavior.
-- Build verification for Android.
+- Small Android-only change.
+- No extra polling, threads, or I/O.
+- Build validation required.
 
 ### Inputs / Outputs
 
-- Input: Android service actions from `MainActivity` (`CONNECT`, `REGISTER`, `LOGIN`, `START_REPORTING`, `START_NOTIFY`, etc.).
-- Output: stable foreground service status notification and high-importance user notification posts.
+- Input: `NotifyEvent` dequeued by Android `NodeService`.
+- Output: Android notification posted through an alert-capable NotifyNode channel.
 
 ### Boundary Exceptions
 
-- If `POST_NOTIFICATIONS` is denied on Android 13+, NotifyNode events are skipped by platform UI but runtime remains connected.
-- Existing Android notification channels cannot have importance raised programmatically after creation, so a new channel ID may be required for already-installed apps.
-- Heads-up display is still subject to Android system, user, DND, and OEM settings.
+- If `POST_NOTIFICATIONS` is denied, no notification is posted.
+- If user/system/OEM disables channel banners/floating notifications, code cannot force heads-up display.
+- If DND suppresses interruption, notification may still only appear in the drawer.
 
 ### Acceptance Criteria
 
-- `ACTION_CONNECT` no longer passes `FOREGROUND_SERVICE_TYPE_CAMERA` to `ServiceCompat.startForeground()`.
-- Foreground service status notification remains low importance / ongoing.
-- NotifyNode user notifications use a high-importance channel and high notification priority for pre-O behavior.
-- Android debug build compiles.
-- Code review checklist passes.
+- NotifyNode notification channel ID is versioned again to avoid immutable prior channel settings.
+- Channel has `IMPORTANCE_HIGH`, vibration enabled, vibration pattern set, and default notification sound.
+- Notification has high or max priority, message category, default sound/vibration fallback, and public visibility.
+- Android debug build passes.
 
 ### Risks
 
-- Removing the runtime camera FGS type from generic service startup may affect future background flashlight behavior if the app later depends on true camera foreground-service semantics.
-- Existing installed devices with the old notify channel ID cannot be upgraded in place if the same channel ID is reused.
+- A more interruptive channel may be too noisy for high-frequency topics.
+- Re-versioning channel creates another channel entry in Android settings.
 
 ## Stage 2 - Architecture Design
 
 ### Overall Approach
 
-Use one Android-only service fix:
+Keep the fix inside `NodeService.kt`:
 
-- Declare the foreground service at runtime as `dataSync` for the MetricsNode service status notification. This matches connect/auth/reporting network synchronization and avoids Android 14 camera foreground-service runtime prerequisites during non-camera actions.
-- Move NotifyNode user notifications to a high-importance channel, using a new channel ID to avoid immutable existing channel importance.
+- Use a new channel ID `myflowhub_notify_v3`.
+- Configure `NotificationChannel` with high importance, vibration, and default notification sound.
+- Configure `NotificationCompat.Builder` with message category, high priority, default sound/vibration, and public visibility.
 
 Alternative considered:
 
-- Dynamically add `FOREGROUND_SERVICE_TYPE_CAMERA` only when camera permission is granted. This still risks Android 14 while-in-use eligibility failures and is unnecessary for connect/auth/notify startup.
+- Full-screen intent. Rejected because NotifyNode messages are not calls/alarms and Android treats full-screen notifications as highly intrusive.
 
 ### Module Responsibilities
 
-- `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
-  - Owns foreground service status notification.
-  - Owns Android NotifyNode user notification posting.
-
-No Go, Windows, or protocol modules participate.
+- `NodeService.kt`: Android foreground service status and user notification posting.
 
 ### Data / Call Flow
 
-1. `MainActivity` dispatches `ACTION_CONNECT` with hub address.
-2. `NodeService.onStartCommand()` calls `startForegroundWithState("Connecting...")`.
-3. `startForegroundWithState()` posts an ongoing status notification with `FOREGROUND_SERVICE_TYPE_DATA_SYNC`.
-4. Notify poller dequeues events and calls `postUserNotification()`.
-5. `postUserNotification()` posts through the high-importance NotifyNode channel.
+1. Notify poller dequeues events.
+2. `postUserNotification()` checks notification permission.
+3. `createNotifyChannelIfNeeded()` creates `myflowhub_notify_v3` with explicit alert behavior.
+4. Notification is posted through `NotificationManager.notify()`.
 
 ### Interface Draft
 
-- No public API change.
-- Internal constants may change:
-  - `NOTIFY_CHANNEL_ID` can be versioned to force high-importance channel creation for existing installs.
+- No public API changes.
+- Internal channel ID changes from `myflowhub_notify_v2` to `myflowhub_notify_v3`.
 
-### Errors And Safety
+### Error And Safety
 
-- Keep `POST_NOTIFICATIONS` permission check before notification posting.
-- Do not throw from channel creation or notification posting beyond existing platform behavior.
-- Keep foreground status notification low importance to avoid persistent heads-up noise.
+- Keep permission guard.
+- Do not crash or disconnect runtime on notification display failure.
+- Do not change foreground service status notification.
 
 ### Performance And Test Strategy
 
-- No additional threads or polling.
-- Android build: `cd android; .\gradlew.bat :app:assembleDebug`.
-- Static review: inspect relevant diff and `git diff --check`.
+- No runtime performance impact beyond one-time channel creation.
+- Run `git diff --check`.
+- Run `cd android; .\gradlew.bat :app:assembleDebug`.
 
 ### Extensibility
 
-- If true background camera operation is required later, add a dedicated camera action/path with explicit permission UX and foreground eligibility checks instead of coupling it to every service action.
+- If users need quiet topics later, add user-configurable notification severity/channel mapping instead of weakening this default channel.
 
 ## Stage 3.1 - Planning
 
@@ -144,68 +127,49 @@ Requirements impact: none
 Specs impact: none
 Related requirements: `docs/requirements/notify-node.md`
 Related specs: `docs/specs/notify-node.md`
-Related lessons: create `docs/lessons/android-fgs-notification-behavior.md` if investigation remains reusable after implementation.
+Related lessons: `docs/lessons/android-fgs-notification-behavior.md`
 
 ## Executable Checklist
 
-- [x] T1: Fix foreground service type used by Android `NodeService`.
-- [x] T2: Fix Android NotifyNode user notification channel / priority behavior.
-- [x] T3: Validate, review, and archive the workflow.
+- [x] T1: Strengthen NotifyNode Android channel alert behavior.
+- [x] T2: Validate and update workflow docs.
 
 ## Tasks
 
-### T1 - Android Foreground Service Type
+### T1 - Android Notify Channel
 
-- Goal: prevent fresh-install Android 14 connect crash caused by using `camera` FGS type for non-camera service startup.
 - Files:
   - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
 - Acceptance:
-  - `ServiceCompat.startForeground()` receives `FOREGROUND_SERVICE_TYPE_DATA_SYNC` only for generic MetricsNode service state.
-  - Manifest can still declare supported service types, but runtime request avoids camera when not actively required.
+  - User notification channel uses `myflowhub_notify_v3`.
+  - Channel explicitly enables vibration and default notification sound.
+  - Notification uses message category, high interruptiveness attributes, and default sound/vibration fallback.
 - Tests:
-  - Android debug build.
-  - Diff inspection for no unrelated behavior changes.
+  - `git diff --check`
+  - Android debug build
 - Rollback:
-  - Restore previous `dataSync | camera` runtime foreground service type.
+  - Restore `myflowhub_notify_v2` and remove explicit sound/vibration/category additions.
 
-### T2 - NotifyNode Heads-Up Channel
+### T2 - Validation And Archive
 
-- Goal: post user notifications through a high-importance channel so Android can show heads-up notifications.
-- Files:
-  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
-- Acceptance:
-  - NotifyNode user channel is created with `NotificationManager.IMPORTANCE_HIGH`.
-  - Existing installs are not trapped on an immutable old default-importance channel.
-  - Notifications set high priority for Android 7.1 and lower compatibility.
-- Tests:
-  - Android debug build.
-  - Diff inspection for foreground status channel remaining low importance.
-- Rollback:
-  - Restore previous notify channel ID and `IMPORTANCE_DEFAULT`.
-
-### T3 - Validation / Review / Archive
-
-- Goal: complete code review and workflow documentation.
 - Files:
   - `plan.md`
-  - `docs/change/2026-05-31_android-fgs-notification-behavior.md`
-  - optional `docs/lessons/android-fgs-notification-behavior.md`
-  - optional `docs/lessons/README.md`
+  - `docs/change/2026-05-31_android-notify-heads-up-channel.md`
+  - `docs/change/README.md`
+  - `docs/lessons/android-fgs-notification-behavior.md`
 - Acceptance:
-  - `git diff --check` passes.
-  - Android debug build result recorded.
-  - Required code review checklist passes.
-  - Change archive includes task mapping, decisions, validation, risks, rollback, and troubleshooting hints.
+  - Validation result is recorded.
+  - Lesson mentions channel settings/OEM/DND limits.
 - Tests:
-  - `cd android; .\gradlew.bat :app:assembleDebug`
+  - Docs diff review.
 - Rollback:
   - Revert this workflow commit/change set.
 
 ## Dependencies / Risks / Notes
 
-- Android official docs require camera FGS type users to satisfy `CAMERA` runtime permission and while-in-use eligibility; generic connection work should not request camera type.
-- Android notification channel importance is immutable after creation; changing channel ID is the practical migration path for existing installs.
-- Parallelism assessment: not parallelizable. Both runtime FGS behavior and notification channel behavior are in `NodeService.kt`, so splitting would create edit conflicts without reducing risk.
+- Official Android docs state heads-up is tied to high-importance channels on Android 8+ and high priority plus ringtone/vibration on Android 7.1 and lower; users can still modify channel settings.
+- No Android device is attached to this workstation, so real heads-up behavior cannot be observed locally.
+- Parallelism assessment: not parallelizable. The code change is a small single-file edit in `NodeService.kt`.
 
 阻塞：否
 进入 3.2
