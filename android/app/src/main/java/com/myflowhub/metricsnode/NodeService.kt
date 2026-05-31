@@ -737,6 +737,7 @@ class NodeService : Service() {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .build()
         val idSeed = event.id.ifBlank { "${event.topic}:${event.name}:${event.ts}" }
@@ -831,7 +832,7 @@ class NodeService : Service() {
             this,
             NOTIFICATION_ID,
             notification,
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC or ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA,
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
         )
     }
 
@@ -863,7 +864,7 @@ class NodeService : Service() {
         val ch = NotificationChannel(
             NOTIFY_CHANNEL_ID,
             "MyFlowHub Notify",
-            NotificationManager.IMPORTANCE_DEFAULT,
+            NotificationManager.IMPORTANCE_HIGH,
         )
         nm.createNotificationChannel(ch)
     }
@@ -888,7 +889,7 @@ class NodeService : Service() {
         const val EXTRA_NODE_ID = "node_id"
 
         private const val CHANNEL_ID = "myflowhub_metricsnode"
-        private const val NOTIFY_CHANNEL_ID = "myflowhub_notify"
+        private const val NOTIFY_CHANNEL_ID = "myflowhub_notify_v2"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFY_ID_BASE = 1000
     }
