@@ -86,13 +86,16 @@ class NodeService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_CONNECT -> {
-                val addr = intent.getStringExtra(EXTRA_ADDR) ?: ""
+                val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+                val addr = (intent.getStringExtra(EXTRA_ADDR) ?: "").trim()
+                prefs.edit().putString("hub_addr", addr).apply()
                 val workDir = File(filesDir, "metricsnode").absolutePath
 
                 startForegroundWithState("Connecting…")
                 Thread {
                     bridge.init(workDir)
-                    val st = bridge.connect(addr.trim())
+                    val st = bridge.connect(addr)
+                    saveServiceSnapshot(st, addr = addr, desiredConnected = st.connected)
                     startForegroundWithState(
                         when {
                             st.reporting -> "Running"
@@ -111,6 +114,8 @@ class NodeService : Service() {
                     val st = bridge.disconnect()
                     running = st.reporting
                     stopObservers()
+                    stopNotifyPoller()
+                    NodeServicePrefs.clearDesired(this)
                     startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
                 }.start()
             }
@@ -128,6 +133,8 @@ class NodeService : Service() {
                 Thread {
                     bridge.init(workDir)
                     val st = bridge.register(deviceId)
+                    val savedNodeId = if (st.auth.nodeId > 0) st.auth.nodeId else 0
+                    saveServiceSnapshot(st, deviceId = deviceId, nodeId = savedNodeId, desiredConnected = st.connected)
                     startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
                 }.start()
             }
@@ -146,6 +153,8 @@ class NodeService : Service() {
                 Thread {
                     bridge.init(workDir)
                     val st = bridge.login(deviceId, nodeId)
+                    val savedNodeId = if (st.auth.nodeId > 0) st.auth.nodeId else nodeId
+                    saveServiceSnapshot(st, deviceId = deviceId, nodeId = savedNodeId, desiredConnected = st.connected)
                     startForegroundWithState(if (st.connected) "Connected" else "Disconnected")
                 }.start()
             }
@@ -157,6 +166,7 @@ class NodeService : Service() {
                     bridge.init(workDir)
                     val st = bridge.startReporting()
                     running = st.reporting
+                    saveServiceSnapshot(st, desiredConnected = st.connected, desiredReporting = st.reporting)
                     if (running) {
                         startObservers()
                         startForegroundWithState("Running")
@@ -179,6 +189,7 @@ class NodeService : Service() {
                         startForegroundWithState("Running")
                     } else {
                         stopObservers()
+                        saveServiceSnapshot(st, desiredConnected = st.connected, desiredReporting = false)
                         startForegroundWithState(
                             when {
                                 st.connected -> "Connected"
@@ -195,6 +206,7 @@ class NodeService : Service() {
                 Thread {
                     bridge.init(workDir)
                     val st = bridge.startNotify()
+                    saveServiceSnapshot(st, desiredConnected = st.connected, desiredNotify = st.notify)
                     if (st.notify) {
                         startNotifyPoller()
                     } else {
@@ -217,6 +229,7 @@ class NodeService : Service() {
                     bridge.init(workDir)
                     val st = bridge.stopNotify()
                     stopNotifyPoller()
+                    saveServiceSnapshot(st, desiredConnected = st.connected, desiredNotify = false)
                     startForegroundWithState(
                         when {
                             st.reporting -> "Running"
@@ -230,6 +243,7 @@ class NodeService : Service() {
                 stopObservers()
                 stopNotifyPoller()
                 running = false
+                NodeServicePrefs.clearDesired(this)
                 bridge.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
@@ -249,6 +263,14 @@ class NodeService : Service() {
                 Thread {
                     val st = bridge.start(NodeConfig(addr = addr, deviceId = deviceId, workDir = workDir))
                     running = st.reporting
+                    saveServiceSnapshot(
+                        st,
+                        addr = addr,
+                        deviceId = deviceId,
+                        nodeId = st.auth.nodeId,
+                        desiredConnected = st.connected,
+                        desiredReporting = st.reporting,
+                    )
                     startForegroundWithState(if (st.connected && st.reporting) "Running" else "Stopped")
                     if (st.reporting) {
                         startObservers()
@@ -259,12 +281,13 @@ class NodeService : Service() {
                 stopObservers()
                 stopNotifyPoller()
                 running = false
+                NodeServicePrefs.clearDesired(this)
                 bridge.stopAll()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
             }
             else -> {
-                // no-op
+                handleRestoreOrRefresh()
             }
         }
         return START_STICKY
@@ -277,6 +300,126 @@ class NodeService : Service() {
     }
 
     fun getState(): NodeState = bridge.status()
+
+    private fun handleRestoreOrRefresh() {
+        val snapshot = NodeServicePrefs.loadSnapshot(this)
+        if (!NodeServiceSupport.shouldRestore(snapshot)) {
+            val st = runCatching { bridge.status() }.getOrDefault(NodeState())
+            if (st.connected || st.reporting || st.notify) {
+                startForegroundWithState(NodeServiceSupport.foregroundText(st))
+            } else {
+                stopSelf()
+            }
+            return
+        }
+        val restoreSnapshot = snapshot ?: return
+        val restoreError = NodeServiceSupport.restoreError(restoreSnapshot)
+        if (restoreError != null) {
+            NodeServicePrefs.clearDesired(this)
+            startForegroundWithState(restoreError)
+            stopSelf()
+            return
+        }
+
+        val workDir = File(filesDir, "metricsnode").absolutePath
+        startForegroundWithState("Restoring…")
+        Thread {
+            bridge.init(workDir)
+            var st = bridge.connect(restoreSnapshot.addr)
+            var desiredReporting = restoreSnapshot.desiredReporting
+            var desiredNotify = restoreSnapshot.desiredNotify
+            var deviceId = restoreSnapshot.deviceId
+            var nodeId = restoreSnapshot.nodeId
+
+            if (st.connected) {
+                val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+                if (deviceId.isBlank()) {
+                    deviceId = st.auth.deviceId.ifBlank { DeviceId.ensure(prefs, "android") }
+                }
+                if (nodeId <= 0) {
+                    nodeId = if (st.auth.nodeId > 0) st.auth.nodeId else (prefs.getString("node_id", "") ?: "").toLongOrNull() ?: 0
+                }
+                if (deviceId.isNotBlank() && nodeId > 0) {
+                    st = bridge.login(deviceId, nodeId)
+                }
+
+                if (desiredReporting) {
+                    st = bridge.startReporting()
+                    running = st.reporting
+                    if (st.reporting) {
+                        startObservers()
+                    } else {
+                        desiredReporting = false
+                        stopObservers()
+                    }
+                }
+
+                if (desiredNotify) {
+                    st = bridge.startNotify()
+                    if (st.notify) {
+                        startNotifyPoller()
+                    } else {
+                        desiredNotify = false
+                        stopNotifyPoller()
+                    }
+                }
+
+                saveServiceSnapshot(
+                    st,
+                    addr = restoreSnapshot.addr,
+                    deviceId = deviceId,
+                    nodeId = if (nodeId > 0) nodeId else st.auth.nodeId,
+                    desiredConnected = st.connected,
+                    desiredReporting = desiredReporting && st.reporting,
+                    desiredNotify = desiredNotify && st.notify,
+                )
+            } else {
+                running = false
+                stopObservers()
+                stopNotifyPoller()
+                saveServiceSnapshot(
+                    st,
+                    addr = restoreSnapshot.addr,
+                    deviceId = restoreSnapshot.deviceId,
+                    nodeId = restoreSnapshot.nodeId,
+                    desiredConnected = restoreSnapshot.desiredConnected,
+                    desiredReporting = restoreSnapshot.desiredReporting,
+                    desiredNotify = restoreSnapshot.desiredNotify,
+                )
+            }
+            startForegroundWithState(NodeServiceSupport.foregroundText(st))
+        }.start()
+    }
+
+    private fun saveServiceSnapshot(
+        st: NodeState,
+        addr: String? = null,
+        deviceId: String? = null,
+        nodeId: Long? = null,
+        desiredConnected: Boolean? = null,
+        desiredReporting: Boolean? = null,
+        desiredNotify: Boolean? = null,
+    ) {
+        val prefs = getSharedPreferences("metricsnode", Context.MODE_PRIVATE)
+        val savedAddr = addr?.trim()?.takeIf { it.isNotEmpty() }
+            ?: st.addr.trim().takeIf { it.isNotEmpty() }
+            ?: (prefs.getString("hub_addr", "") ?: "").trim()
+        val savedDeviceId = deviceId?.trim()?.takeIf { it.isNotEmpty() }
+            ?: st.auth.deviceId.trim().takeIf { it.isNotEmpty() }
+            ?: (prefs.getString(DeviceId.PrefKey, "") ?: "").trim()
+        val savedNodeId = nodeId?.takeIf { it > 0 }
+            ?: st.auth.nodeId.takeIf { it > 0 }
+            ?: (prefs.getString("node_id", "") ?: "").toLongOrNull()?.takeIf { it > 0 }
+        NodeServicePrefs.saveMerged(
+            this,
+            addr = savedAddr,
+            deviceId = savedDeviceId,
+            nodeId = savedNodeId,
+            desiredConnected = desiredConnected,
+            desiredReporting = desiredReporting,
+            desiredNotify = desiredNotify,
+        )
+    }
 
     private fun startObservers() {
         applyMetricSettingsFromRaw(bridge.metricsSettingsGet())

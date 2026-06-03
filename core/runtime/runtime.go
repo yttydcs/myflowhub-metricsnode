@@ -32,6 +32,11 @@ import (
 
 const defaultAuthTimeout = 8 * time.Second
 
+var (
+	reconnectInitialDelay = 1 * time.Second
+	reconnectMaxDelay     = 30 * time.Second
+)
+
 type AuthSnapshot struct {
 	DeviceID string `json:"device_id,omitempty"`
 	NodeID   uint32 `json:"node_id,omitempty"`
@@ -59,6 +64,11 @@ type Runtime struct {
 	addr     string
 
 	connected atomic.Bool
+
+	reconnectMu      sync.Mutex
+	reconnectCancel  context.CancelFunc
+	reconnectRunning bool
+	reconnectDesired atomic.Bool
 
 	authMu sync.Mutex
 	auth   AuthSnapshot
@@ -221,9 +231,11 @@ func (r *Runtime) onClientError(err error) {
 	}
 	r.connected.Store(false)
 	r.storeLastError(err)
+	r.markSessionLoggedOut("session_error", err.Error())
 	if r.log != nil {
 		r.log.Warn("client session error", "err", err.Error())
 	}
+	r.scheduleReconnect(err)
 }
 
 func (r *Runtime) Connect(addr string) error {
@@ -237,34 +249,19 @@ func (r *Runtime) Connect(addr string) error {
 
 	r.clientMu.Lock()
 	prevAddr := r.addr
+	r.addr = addr
 	r.clientMu.Unlock()
 	if prevAddr != "" && prevAddr != addr {
 		r.Close()
+		r.clientMu.Lock()
+		r.addr = addr
+		r.clientMu.Unlock()
 	}
 
-	c := r.ensureClient()
-	if err := c.Connect(addr); err != nil {
-		if errors.Is(err, session.ErrAlreadyConnected) {
-			r.connected.Store(true)
-			r.clientMu.Lock()
-			r.addr = addr
-			r.clientMu.Unlock()
-			return nil
-		}
-		r.storeLastError(err)
-		if r.log != nil {
-			r.log.Warn("client connect failed", "addr", addr, "err", err.Error())
-		}
+	if err := r.connectTransport(addr); err != nil {
 		return err
 	}
-
-	r.connected.Store(true)
-	r.clientMu.Lock()
-	r.addr = addr
-	r.clientMu.Unlock()
-	if r.log != nil {
-		r.log.Info("client connected", "addr", addr)
-	}
+	r.reconnectDesired.Store(true)
 	if r.IsNotifyRunning() {
 		if err := r.subscribeNotifyTopics(); err != nil && r.log != nil {
 			r.log.Warn("notify resubscribe after connect failed", "err", err.Error())
@@ -277,21 +274,205 @@ func (r *Runtime) Close() {
 	if r == nil {
 		return
 	}
+	r.reconnectDesired.Store(false)
+	r.cancelReconnect()
 	r.StopReporting()
 	r.StopNotify()
+	r.markSessionLoggedOut("disconnect", "client closed")
+	r.closeClientForReconnect()
 	r.clientMu.Lock()
-	c := r.client
-	r.client = nil
 	r.addr = ""
 	r.clientMu.Unlock()
+	if r.log != nil {
+		r.log.Info("client closed")
+	}
+}
 
+func (r *Runtime) connectTransport(addr string) error {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return errors.New("addr is required")
+	}
+	c := r.ensureClient()
+	if err := c.Connect(addr); err != nil {
+		if errors.Is(err, session.ErrAlreadyConnected) {
+			if r.IsConnected() {
+				r.clientMu.Lock()
+				r.addr = addr
+				r.clientMu.Unlock()
+				return nil
+			}
+			r.closeClientForReconnect()
+			c = r.ensureClient()
+			if retryErr := c.Connect(addr); retryErr != nil {
+				r.storeLastError(retryErr)
+				if r.log != nil {
+					r.log.Warn("client reconnect failed", "addr", addr, "err", retryErr.Error())
+				}
+				return retryErr
+			}
+		} else {
+			r.storeLastError(err)
+			if r.log != nil {
+				r.log.Warn("client connect failed", "addr", addr, "err", err.Error())
+			}
+			return err
+		}
+	}
+
+	r.connected.Store(true)
+	r.clientMu.Lock()
+	r.addr = addr
+	r.clientMu.Unlock()
+	if r.log != nil {
+		r.log.Info("client connected", "addr", addr)
+	}
+	return nil
+}
+
+func (r *Runtime) closeClientForReconnect() {
+	if r == nil {
+		return
+	}
+	r.clientMu.Lock()
+	c := r.client
+	r.clientMu.Unlock()
 	if c != nil {
 		c.Close()
 	}
 	r.connected.Store(false)
-	if r.log != nil {
-		r.log.Info("client closed")
+}
+
+func (r *Runtime) scheduleReconnect(reason error) {
+	if r == nil || !r.reconnectDesired.Load() {
+		return
 	}
+	r.reconnectMu.Lock()
+	if r.reconnectRunning {
+		r.reconnectMu.Unlock()
+		return
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	r.reconnectCancel = cancel
+	r.reconnectRunning = true
+	r.reconnectMu.Unlock()
+
+	if r.log != nil && reason != nil {
+		r.log.Info("runtime reconnect scheduled", "reason", reason.Error())
+	}
+	go r.reconnectLoop(ctx)
+}
+
+func (r *Runtime) cancelReconnect() {
+	if r == nil {
+		return
+	}
+	r.reconnectMu.Lock()
+	cancel := r.reconnectCancel
+	r.reconnectMu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+func (r *Runtime) reconnectLoop(ctx context.Context) {
+	defer func() {
+		r.reconnectMu.Lock()
+		r.reconnectCancel = nil
+		r.reconnectRunning = false
+		r.reconnectMu.Unlock()
+	}()
+
+	delay := reconnectInitialDelay
+	for r.reconnectDesired.Load() {
+		if err := ctx.Err(); err != nil {
+			return
+		}
+		if err := r.recoverOnce(ctx); err != nil {
+			r.storeLastError(err)
+			if r.log != nil {
+				r.log.Warn("runtime reconnect attempt failed", "err", err.Error())
+			}
+		} else {
+			if !r.IsConnected() {
+				if delay <= 0 {
+					delay = time.Second
+				}
+				select {
+				case <-time.After(delay):
+				case <-ctx.Done():
+					return
+				}
+				if delay < reconnectMaxDelay {
+					delay *= 2
+					if delay > reconnectMaxDelay {
+						delay = reconnectMaxDelay
+					}
+				}
+				continue
+			}
+			if r.log != nil {
+				r.log.Info("runtime reconnect restored")
+			}
+			return
+		}
+
+		if delay <= 0 {
+			delay = time.Second
+		}
+		select {
+		case <-time.After(delay):
+		case <-ctx.Done():
+			return
+		}
+		if delay < reconnectMaxDelay {
+			delay *= 2
+			if delay > reconnectMaxDelay {
+				delay = reconnectMaxDelay
+			}
+		}
+	}
+}
+
+func (r *Runtime) recoverOnce(ctx context.Context) error {
+	if r == nil {
+		return errors.New("runtime not initialized")
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	addr := strings.TrimSpace(r.LastAddr())
+	if addr == "" {
+		return errors.New("reconnect addr is required")
+	}
+	auth := r.AuthState()
+
+	r.closeClientForReconnect()
+	if err := r.connectTransport(addr); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		r.closeClientForReconnect()
+		return err
+	}
+
+	deviceID := strings.TrimSpace(auth.DeviceID)
+	if deviceID == "" || auth.NodeID == 0 {
+		if r.IsReporting() || r.IsNotifyRunning() {
+			return errors.New("saved auth identity is required to restore reporting or notify")
+		}
+		return nil
+	}
+	if _, err := r.Login(deviceID, auth.NodeID); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		r.reconnectDesired.Store(false)
+		r.markSessionLoggedOut("reconnect_cancelled", err.Error())
+		r.closeClientForReconnect()
+		return err
+	}
+	return nil
 }
 
 func (r *Runtime) IsConnected() bool {
@@ -474,11 +655,13 @@ func (r *Runtime) Login(deviceID string, nodeID uint32) (protoauth.RespData, err
 	if err := r.saveAuthSnapshot(r.AuthState()); err != nil {
 		r.storeLastError(err)
 	}
+	r.reconnectDesired.Store(true)
 	if r.IsNotifyRunning() {
 		if err := r.subscribeNotifyTopics(); err != nil && r.log != nil {
 			r.log.Warn("notify resubscribe after login failed", "err", err.Error())
 		}
 	}
+	r.forceRepublishFromConfig()
 
 	return data, nil
 }
@@ -719,6 +902,40 @@ func (r *Runtime) setAuthResult(ok bool, action, msg string) {
 	r.authMu.Unlock()
 }
 
+func (r *Runtime) markSessionLoggedOut(action, msg string) {
+	if r == nil {
+		return
+	}
+	action = strings.TrimSpace(action)
+	if action == "" {
+		action = "session_closed"
+	}
+	r.authMu.Lock()
+	st := r.auth
+	st.LoggedIn = false
+	st.LastAction = action
+	st.LastMessage = strings.TrimSpace(msg)
+	st.LastUnixTime = time.Now().Unix()
+	r.auth = st
+	r.authMu.Unlock()
+	if err := r.saveAuthSnapshot(st); err != nil {
+		r.storeLastError(err)
+		if r.log != nil {
+			r.log.Warn("save logged-out auth snapshot failed", "err", err.Error())
+		}
+	}
+}
+
+func (r *Runtime) forceRepublishFromConfig() {
+	if r == nil || !r.IsReporting() {
+		return
+	}
+	r.reportMu.Lock()
+	r.lastPublished = make(map[string]publishedVar)
+	r.reportMu.Unlock()
+	r.republishFromConfig()
+}
+
 func (r *Runtime) authSnapshotPath() string {
 	if r == nil {
 		return ""
@@ -738,6 +955,13 @@ func (r *Runtime) loadAuthSnapshot() error {
 	var st AuthSnapshot
 	if err := json.Unmarshal(data, &st); err != nil {
 		return err
+	}
+	if st.LoggedIn {
+		st.LoggedIn = false
+		st.LastAction = "load_auth_snapshot"
+		st.LastMessage = "loaded identity requires fresh login"
+		st.LastUnixTime = time.Now().Unix()
+		_ = r.saveAuthSnapshot(st)
 	}
 	r.authMu.Lock()
 	r.auth = st

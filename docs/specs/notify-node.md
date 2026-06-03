@@ -44,6 +44,28 @@ The runtime exposes:
 
 Android gomobile mirrors these with JSON string inputs/outputs.
 
+## Runtime Session Recovery
+
+Runtime reconnect is implemented above the SDK transport layer because MetricsNode owns auth, metrics reporting, and NotifyNode subscription state.
+
+Recovery rules:
+
+- `Runtime.Connect(addr)` records reconnect intent only after a successful connect.
+- `Runtime.Login(deviceID, nodeID)` records reconnect intent after successful login and refreshes connection-scoped state.
+- SDK session errors mark the runtime disconnected and mark auth `LoggedIn=false`.
+- Reconnect uses the last successful address and bounded exponential backoff.
+- Each reconnect attempt closes the broken client/session before dialing again.
+- If durable `device_id` and `node_id` are available, recovery performs fresh `Login` on the new transport session.
+- If NotifyNode is running, fresh login sends `subscribe_batch` again.
+- If metrics reporting is running, fresh login clears the publish de-dupe cache and republishes latest known metric values from runtime config.
+- Explicit `Close` cancels reconnect intent, stops reporting and NotifyNode, marks auth logged out, and closes the client.
+
+Auth snapshot rules:
+
+- `auth_snapshot.json` stores durable identity and recent auth diagnostics.
+- `logged_in` is a live session flag, not durable truth.
+- Loading a snapshot with `logged_in=true` rewrites it as `false` while preserving identity fields.
+
 ## Inbound Handling
 
 `Runtime.onUnmatchedFrame` routes TopicBus frames to a NotifyNode handler after VarStore and Management checks.
@@ -89,3 +111,7 @@ Android:
 - A dedicated notification channel posts user message notifications.
 - Foreground service status notification remains separate.
 - `POST_NOTIFICATIONS` denial leaves runtime connected/subscribed but prevents Android notification display.
+- `NodeService` persists a desired run snapshot with address, device id, node id, desired connected state, desired reporting state, and desired notify state.
+- `START_STICKY` restart with a null or unknown intent restores from the desired run snapshot instead of relying on original intent extras.
+- Restore flow is `init -> connect -> login -> startReporting/startNotify`, skipping reporting/notify if the restored runtime state does not support them.
+- Explicit disconnect, stop, and stop-all actions clear the desired run snapshot before stopping foreground work.
