@@ -96,13 +96,7 @@ class NodeService : Service() {
                     bridge.init(workDir)
                     val st = bridge.connect(addr)
                     saveServiceSnapshot(st, addr = addr, desiredConnected = st.connected)
-                    startForegroundWithState(
-                        when {
-                            st.reporting -> "Running"
-                            st.connected -> "Connected"
-                            else -> "Disconnected"
-                        }
-                    )
+                    startForegroundWithState(NodeServiceSupport.foregroundText(st))
                 }.start()
             }
             ACTION_DISCONNECT -> {
@@ -212,13 +206,7 @@ class NodeService : Service() {
                     } else {
                         stopNotifyPoller()
                     }
-                    startForegroundWithState(
-                        when {
-                            st.reporting -> "Running"
-                            st.connected -> "Connected"
-                            else -> "Disconnected"
-                        }
-                    )
+                    startForegroundWithState(NodeServiceSupport.foregroundText(st))
                 }.start()
             }
             ACTION_STOP_NOTIFY -> {
@@ -230,13 +218,7 @@ class NodeService : Service() {
                     val st = bridge.stopNotify()
                     stopNotifyPoller()
                     saveServiceSnapshot(st, desiredConnected = st.connected, desiredNotify = false)
-                    startForegroundWithState(
-                        when {
-                            st.reporting -> "Running"
-                            st.connected -> "Connected"
-                            else -> "Disconnected"
-                        }
-                    )
+                    startForegroundWithState(NodeServiceSupport.foregroundText(st))
                 }.start()
             }
             ACTION_STOP_ALL -> {
@@ -305,7 +287,18 @@ class NodeService : Service() {
         val snapshot = NodeServicePrefs.loadSnapshot(this)
         if (!NodeServiceSupport.shouldRestore(snapshot)) {
             val st = runCatching { bridge.status() }.getOrDefault(NodeState())
-            if (st.connected || st.reporting || st.notify) {
+            if (NodeServiceSupport.hasLiveRuntimeWork(st)) {
+                running = NodeServiceSupport.shouldRunMetricObservers(st)
+                if (NodeServiceSupport.shouldRunMetricObservers(st)) {
+                    startObservers()
+                } else {
+                    stopObservers()
+                }
+                if (NodeServiceSupport.shouldRunNotifyPoller(st)) {
+                    startNotifyPoller()
+                } else {
+                    stopNotifyPoller()
+                }
                 startForegroundWithState(NodeServiceSupport.foregroundText(st))
             } else {
                 stopSelf()

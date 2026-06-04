@@ -110,8 +110,10 @@ Android:
 - `NodeService` starts NotifyNode separately from metrics reporting.
 - A dedicated notification channel posts user message notifications.
 - Foreground service status notification remains separate.
-- `POST_NOTIFICATIONS` denial leaves runtime connected/subscribed but prevents Android notification display.
+- Android 13+ `POST_NOTIFICATIONS` permission is checked before explicit NotifyNode start from the app UI.
+- `POST_NOTIFICATIONS` denial blocks Android user-message notification display; if permission is revoked after NotifyNode is already running, runtime subscription state may remain active while `NodeService` suppresses notification posting.
 - `NodeService` persists a desired run snapshot with address, device id, node id, desired connected state, desired reporting state, and desired notify state.
 - `START_STICKY` restart with a null or unknown intent restores from the desired run snapshot instead of relying on original intent extras.
 - Restore flow is `init -> connect -> login -> startReporting/startNotify`, skipping reporting/notify if the restored runtime state does not support them.
+- A null or unknown intent refresh with live runtime work restarts Android host-side observers and NotifyNode poller from `bridge.status()` even when no persisted snapshot restore is required.
 - Explicit disconnect, stop, and stop-all actions clear the desired run snapshot before stopping foreground work.

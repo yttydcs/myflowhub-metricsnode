@@ -485,3 +485,209 @@ Using `$m-docs`:
 
 阻塞：否
 进入 4
+
+## Follow-up - Android Background Notify
+
+### Trigger
+
+User reported on 2026-06-04 that Android background notifications are completely non-functional after the reconnect/service restore workflow.
+
+### Current Worktree
+
+- Repo: `D:/project/MyFlowHub3/repo/MyFlowHub-MetricsNode`
+- Branch: `fix/metricsnode-android-background-notify`
+- Base: `main` at `cfd46be`
+- Worktree: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify`
+- Current Stage: `3.2` follow-up implementation
+
+### Requirements / Specs / Lessons Impact
+
+- Requirements impact: clarify
+- Specs impact: clarify
+- Related requirements: `docs/requirements/notify-node.md`
+- Related specs: `docs/specs/notify-node.md`
+- Related lessons:
+  - `docs/lessons/metricsnode-reconnect-android-keepalive.md`
+  - `docs/lessons/android-fgs-notification-behavior.md`
+
+### Requirements Analysis
+
+- Goal: Android NotifyNode must actually post user notifications while the service is in the background when the user has enabled NotifyNode and Android notification permission allows display.
+- Must:
+  - request/check `POST_NOTIFICATIONS` before Android explicit NotifyNode start on Android 13+;
+  - avoid relying on a one-time Compose permission value;
+  - restart host-side NotifyNode poller when service refresh sees live runtime `notify=true`;
+  - keep explicit stop semantics unchanged.
+- Not doing:
+  - OEM battery exemption UX;
+  - WorkManager background scheduling;
+  - TopicBus protocol changes;
+  - guaranteed heads-up/banner display beyond existing notification channel behavior.
+- Acceptance:
+  - Start Notify requests permission and refuses to silently start display-less notification mode when permission is missing.
+  - Null/unknown service refresh restarts `startNotifyPoller()` from live runtime status when notify is active.
+  - Android unit tests and Kotlin compile pass.
+
+### Architecture Analysis
+
+- `MainActivity` owns user-visible permission flow and passes live permission state into `NotifyPage`.
+- `NodeService` owns host-side poller lifecycle because Go runtime notify state and Java/Kotlin polling thread state are separate.
+- `NodeServiceSupport` keeps restore/refresh decisions pure and unit-testable.
+- Docs routing:
+  - stable behavior clarification -> `docs/requirements/notify-node.md`;
+  - technical contract clarification -> `docs/specs/notify-node.md`;
+  - reusable troubleshooting -> `docs/lessons/metricsnode-reconnect-android-keepalive.md`;
+  - archive -> `docs/change/2026-06-04_metricsnode-android-background-notify.md`.
+
+### Executable Tasks
+
+##### FUP-ANDROID-NOTIFY-1 - Permission-Gated Notify Start
+
+- Owner: main agent
+- Worktree: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify`
+- Plan Path: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify/plan.md`
+- Goal: Make Android 13+ notification permission state live and block explicit Notify start when user notifications cannot be posted.
+- Files / Modules:
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+- Write Set:
+  - `android/app/src/main/java/com/myflowhub/metricsnode/MainActivity.kt`
+- Acceptance:
+  - `Start Notify` requests permission if needed.
+  - stale permission state is rechecked against OS state before blocking.
+- Test Points:
+  - Kotlin compile.
+- Rollback:
+  - Revert the `hasNotifPermission` and `NotifyPage` parameter changes.
+
+##### FUP-ANDROID-NOTIFY-2 - Refresh Restarts Notify Poller
+
+- Owner: main agent
+- Worktree: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify`
+- Plan Path: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify/plan.md`
+- Goal: Restart Android host-side pollers when service refresh sees live Go runtime work.
+- Files / Modules:
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeServiceSupport.kt`
+  - `android/app/src/test/java/com/myflowhub/metricsnode/NodeServiceSupportTest.kt`
+- Write Set:
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeService.kt`
+  - `android/app/src/main/java/com/myflowhub/metricsnode/NodeServiceSupport.kt`
+  - `android/app/src/test/java/com/myflowhub/metricsnode/NodeServiceSupportTest.kt`
+- Acceptance:
+  - refresh with `notify=true` starts `startNotifyPoller()`;
+  - refresh with `reporting=true` starts metric observers;
+  - idle refresh stops the service.
+- Test Points:
+  - `:app:testDebugUnitTest`.
+- Rollback:
+  - Revert the no-snapshot branch and helper/test changes.
+
+##### FUP-DOCS-1 - Follow-up Archive And Lessons
+
+- Owner: main agent
+- Worktree: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify`
+- Plan Path: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify/plan.md`
+- Goal: Record the follow-up root cause and searchable Android notification checks.
+- Files / Modules:
+  - `docs/requirements/notify-node.md`
+  - `docs/specs/notify-node.md`
+  - `docs/lessons/metricsnode-reconnect-android-keepalive.md`
+  - `docs/lessons/README.md`
+  - `docs/change/2026-06-04_metricsnode-android-background-notify.md`
+  - `docs/change/README.md`
+- Write Set:
+  - same as files/modules.
+- Acceptance:
+  - change archive exists and indexes link it;
+  - lesson contains permission and poller restart quick checks.
+- Test Points:
+  - docs diff review.
+- Rollback:
+  - remove the follow-up archive and revert docs/index edits.
+
+##### FUP-VERIFY-1 - Validation And Review
+
+- Owner: main agent
+- Worktree: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify`
+- Plan Path: `D:/project/MyFlowHub3/worktrees/fix-metricsnode-android-background-notify/plan.md`
+- Goal: Validate Android follow-up and complete code review.
+- Files / Modules:
+  - `plan.md`
+- Write Set:
+  - `plan.md`
+- Acceptance:
+  - Android unit tests and Kotlin compile pass;
+  - `git diff --check` passes;
+  - review checklist is recorded.
+- Test Points:
+  - `cd android; :app:testDebugUnitTest :app:compileDebugKotlin`
+  - `git diff --check`
+- Rollback:
+  - return to implementation task for any failed check.
+
+### Parallelism Assessment
+
+- Sub-agent use: not used.
+- Reason: Android permission state, service poller lifecycle, and docs archive share one narrow write set and do not benefit from delegation.
+
+阻塞：否
+进入 3.2
+
+### Follow-up Stage 3.2 - Implementation Summary
+
+- `FUP-ANDROID-NOTIFY-1`: completed.
+  - `MainActivity` now computes notification permission from live OS state, updates mutable state on permission result, and rechecks stale state before blocking `Start Notify`.
+  - `NotifyPage` requests permission and returns a clear error instead of silently starting notification delivery without Android permission.
+- `FUP-ANDROID-NOTIFY-2`: completed.
+  - `NodeService.handleRestoreOrRefresh()` now restarts metric observers and `startNotifyPoller()` when `bridge.status()` reports live work and no persisted snapshot restore is required.
+  - `NodeServiceSupport` exposes pure live-work/poller decisions covered by `NodeServiceSupportTest`.
+  - Notify foreground status text uses `NodeServiceSupport.foregroundText()`.
+- `FUP-DOCS-1`: completed.
+  - Requirements/specs clarify Android permission gating and service refresh poller restart.
+  - Lessons and change archive include reusable checks for `POST_NOTIFICATIONS` and `startNotifyPoller`.
+
+### Follow-up Stage 3.3 - Code Review
+
+#### Checklist
+
+- 需求覆盖: 通过
+- 架构合理性: 通过
+- 性能风险（N+1 / 重复计算 / 多余 I/O / 锁竞争）: 通过
+- 可读性与一致性: 通过
+- 可扩展性与配置化: 通过
+- 稳定性与安全: 通过
+- 测试覆盖情况: 通过
+- 子Agent治理与审计（任务映射、上下文完整性、文件所有权、结果复核、冲突处理、记录完整性）: 通过
+
+#### Review Notes
+
+- Android permission state is read from the OS before user-visible Notify start, so stale Compose state cannot keep the app in a false denial state.
+- Host poller lifecycle is restored at the Android service layer because Go runtime `notify=true` does not imply the Java/Kotlin poller thread survived service destruction.
+- No shared runtime reconnect behavior was changed in this follow-up.
+
+### Follow-up Stage 4 - Change Archive
+
+Using `$m-docs`:
+
+- Requirements impact: updated
+- Specs impact: updated
+- Lessons impact: updated
+- Related requirements: `docs/requirements/notify-node.md`
+- Related specs: `docs/specs/notify-node.md`
+- Related lessons:
+  - `docs/lessons/metricsnode-reconnect-android-keepalive.md`
+  - `docs/lessons/android-fgs-notification-behavior.md`
+- Archive: `docs/change/2026-06-04_metricsnode-android-background-notify.md`
+
+#### Validation
+
+- `cd android; :app:testDebugUnitTest :app:compileDebugKotlin`: passed.
+- `git diff --check`: passed.
+- Note: Android validation used the existing stub bridge fallback because local `android/app/libs/myflowhub.aar` is absent.
+
+#### Outcome
+
+- Follow-up archive is complete and awaiting the user's end-workflow confirmation.
+
+阻塞：否
+进入 4

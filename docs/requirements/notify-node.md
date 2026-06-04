@@ -42,11 +42,14 @@ Out of scope:
 - Metrics reporting remains enabled across transient session loss and republishes the latest known values after fresh login.
 - Android foreground service sticky restart restores only when a saved desired run snapshot requests connected, reporting, or notify state.
 - Android explicit stop, stop-all, or disconnect clears desired restore state so sticky restart does not undo the user's stop action.
+- Android explicit NotifyNode start requests `POST_NOTIFICATIONS` before enabling notification delivery on Android 13+.
+- If a live Android runtime still reports notify or reporting work during service refresh, the host service restarts the matching local pollers/observers before updating foreground status.
 
 ## Acceptance Criteria
 
 - A Windows host can configure at least one topic, start NotifyNode, receive a matching TopicBus publish, and display a user-visible system notification when the runtime environment supports it.
 - An Android host can configure at least one topic, start NotifyNode through the foreground service, receive a matching TopicBus publish, and post an Android notification.
+- Android 13+ users are prompted for notification permission before starting NotifyNode from the app UI; without the permission, user-message notification display is blocked explicitly instead of failing silently.
 - Topic settings are persisted in local runtime config and survive app restart.
 - Reconnect or explicit start restores TopicBus subscriptions because server-side TopicBus subscriptions are connection-scoped and in-memory.
 - Reconnect or process restart requires fresh login before NotifyNode subscription or metrics reporting recovery.

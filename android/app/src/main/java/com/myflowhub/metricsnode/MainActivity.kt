@@ -97,14 +97,33 @@ private fun MetricsNodeApp() {
 
     var page by remember { mutableStateOf(0) } // 0=Connect 1=Settings 2=Notify
 
+    fun readNotificationPermission(): Boolean {
+        return Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.POST_NOTIFICATIONS,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+    var hasNotifPermission by remember { mutableStateOf(readNotificationPermission()) }
     val notificationLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission(),
-        onResult = { /* no-op */ },
+        onResult = { granted ->
+            hasNotifPermission = granted || readNotificationPermission()
+        },
     )
 
-    val hasNotifPermission = remember {
-        if (Build.VERSION.SDK_INT < 33) true else {
-            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+    if (Build.VERSION.SDK_INT >= 33) {
+        LaunchedEffect(Unit) {
+            hasNotifPermission = readNotificationPermission()
+        }
+    }
+
+    val requestNotificationPermission = {
+        if (readNotificationPermission()) {
+            hasNotifPermission = true
+            true
+        } else {
+            notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            false
         }
     }
 
@@ -149,7 +168,7 @@ private fun MetricsNodeApp() {
                 if (Build.VERSION.SDK_INT >= 33 && !hasNotifPermission) {
                     Button(
                         modifier = Modifier.padding(top = 12.dp),
-                        onClick = { notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) },
+                        onClick = { requestNotificationPermission() },
                     ) {
                         Text("Grant Notification Permission")
                     }
@@ -196,6 +215,8 @@ private fun MetricsNodeApp() {
                                 context = context,
                                 bridge = bridge,
                                 state = state,
+                                hasNotifPermission = hasNotifPermission,
+                                onRequestNotificationPermission = requestNotificationPermission,
                             )
                         }
                     }
@@ -210,6 +231,8 @@ private fun NotifyPage(
     context: Context,
     bridge: NodeBridge,
     state: NodeState,
+    hasNotifPermission: Boolean,
+    onRequestNotificationPermission: () -> Boolean,
 ) {
     val scope = rememberCoroutineScope()
     val topics = remember { mutableStateListOf<NotifyTopicSetting>() }
@@ -318,6 +341,10 @@ private fun NotifyPage(
                         modifier = Modifier.weight(1f),
                         enabled = state.connected && state.auth.loggedIn && !state.notify && topics.any { it.enabled },
                         onClick = {
+                            if (!hasNotifPermission && !onRequestNotificationPermission()) {
+                                error = "notification permission is required"
+                                return@Button
+                            }
                             if (!saveBlocking()) {
                                 return@Button
                             }

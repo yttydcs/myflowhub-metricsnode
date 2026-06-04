@@ -37,4 +37,22 @@ class NodeServiceSupportTest {
         assertEquals("Connected | Notify", NodeServiceSupport.foregroundText(NodeState(connected = true, notify = true)))
         assertEquals("Disconnected", NodeServiceSupport.foregroundText(NodeState()))
     }
+
+    @Test
+    fun liveRuntimeWorkRestartsHostPollers() {
+        val idle = NodeState()
+        assertFalse(NodeServiceSupport.hasLiveRuntimeWork(idle))
+        assertFalse(NodeServiceSupport.shouldRunMetricObservers(idle))
+        assertFalse(NodeServiceSupport.shouldRunNotifyPoller(idle))
+
+        val notifyOnly = NodeState(connected = true, notify = true)
+        assertTrue(NodeServiceSupport.hasLiveRuntimeWork(notifyOnly))
+        assertFalse(NodeServiceSupport.shouldRunMetricObservers(notifyOnly))
+        assertTrue(NodeServiceSupport.shouldRunNotifyPoller(notifyOnly))
+
+        val reportingOnly = NodeState(connected = true, reporting = true)
+        assertTrue(NodeServiceSupport.hasLiveRuntimeWork(reportingOnly))
+        assertTrue(NodeServiceSupport.shouldRunMetricObservers(reportingOnly))
+        assertFalse(NodeServiceSupport.shouldRunNotifyPoller(reportingOnly))
+    }
 }

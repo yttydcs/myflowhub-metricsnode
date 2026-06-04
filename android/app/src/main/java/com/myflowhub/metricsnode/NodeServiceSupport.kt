@@ -7,6 +7,18 @@ internal object NodeServiceSupport {
         return snapshot != null && snapshot.wantsRestore()
     }
 
+    fun hasLiveRuntimeWork(st: NodeState): Boolean {
+        return st.connected || st.reporting || st.notify
+    }
+
+    fun shouldRunMetricObservers(st: NodeState): Boolean {
+        return st.reporting
+    }
+
+    fun shouldRunNotifyPoller(st: NodeState): Boolean {
+        return st.notify
+    }
+
     fun restoreError(snapshot: NodeRunSnapshot?): String? {
         if (!shouldRestore(snapshot)) {
             return null
